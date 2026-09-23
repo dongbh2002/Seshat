@@ -2,7 +2,26 @@
 
 from backend.runtime.agent_loop import AgentLoop
 from backend.runtime.context_engine import ContextEngine
+from backend.runtime.hook_engine import (
+    HookContext,
+    HookEngine,
+    HookEvent,
+    HookExecutionError,
+    HookRejectedError,
+    HookScope,
+)
 from backend.runtime.runtime import Runtime
 from backend.runtime.tool_engine import ToolEngine
 
-__all__ = ["AgentLoop", "ContextEngine", "Runtime", "ToolEngine"]
+__all__ = [
+    "AgentLoop",
+    "ContextEngine",
+    "HookContext",
+    "HookEngine",
+    "HookEvent",
+    "HookExecutionError",
+    "HookRejectedError",
+    "HookScope",
+    "Runtime",
+    "ToolEngine",
+]
