@@ -1,15 +1,16 @@
 """项目配置加载模块，仅负责读取 YAML 配置文件。"""
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import yaml
-
 
 _DEFAULT_CONFIG_PATH = Path(__file__).with_name("application_local.yaml")
 
 
-def load_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
+def load_config(config_path: Path | None = None) -> dict[str, Any]:
     """读取 YAML 项目配置。
 
     Args:

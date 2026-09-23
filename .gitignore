@@ -1,6 +1,8 @@
 # 本文件用于排除本地敏感配置，同时保留可提交的环境变量示例。
 /env/.env
 /.venv/
+/.vscode/
+/.ruff_cache/
 /.pytest_cache/
 __pycache__/
 *.py[cod]
