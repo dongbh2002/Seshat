@@ -1,0 +1,31 @@
+# 本文件保存项目运行变量及模型环境变量映射，后续配置可直接扩展。
+default_tenant: "233"
+
+tenants:
+  "233":
+    default_user: dbh
+    session_name: pe
+
+agent_loop:
+  max_steps: 8
+
+context:
+  compression:
+    tool_cleanup_threshold_chars: 60000
+    turn_compaction_threshold_chars: 80000
+    hard_limit_chars: 100000
+    keep_recent_turns: 4
+    summary_max_chars: 12000
+
+current_model: KIMI-K26
+
+models:
+  KIMI-K26:
+    api_key_env: KIMI-K26_API_KEY
+    base_url_env: KIMI-K26_BASE_URL
+    model_name_env: KIMI-K26_MODEL_NAME
+    parameters:
+      max_completion_tokens: 50000
+      extra_body:
+        thinking:
+          type: disabled

@@ -1,0 +1,7 @@
+# 本文件统一仓库中文本文件的换行符，避免不同操作系统产生无意义差异。
+* text=auto eol=lf
+
+# Windows 脚本使用系统原生换行符。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
