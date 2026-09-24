@@ -10,6 +10,7 @@ from typing import Any
 from openai import OpenAI
 
 from backend.config import config
+from backend.runtime.context_engine import ContextEngine
 from backend.runtime.hook_engine import (
     HookContext,
     HookEngine,
@@ -28,8 +29,8 @@ class AgentLoop:
         client: OpenAI,
         model: str,
         tool_engine: ToolEngine | None = None,
-        system_prompt: str | None = None,
-        max_steps: int = 8,
+        context_engine: ContextEngine | None = None,
+        max_steps: int | None = None,
         default_request_options: dict[str, Any] | None = None,
         hook_engine: HookEngine | None = None,
     ) -> None:
@@ -38,24 +39,40 @@ class AgentLoop:
         Args:
             client: OpenAI 兼容模型客户端。
             model: 每轮请求使用的实际模型名称。
-            tool_engine: 可选的工具注册与执行引擎。
-            system_prompt: 可选的系统提示词。
-            max_steps: 单次用户输入允许的最大模型调用轮数。
+            tool_engine: 可选的工具引擎；省略时创建空工具引擎。
+            context_engine: 可选的上下文引擎；省略时创建默认引擎。
+            max_steps: 可选的最大模型调用轮数；省略时读取 YAML 配置。
             default_request_options: 每次模型调用默认使用的请求参数。
             hook_engine: 模型请求前后和失败时使用的共享 HookEngine。
 
         Returns:
             None。
+
+        Raises:
+            TypeError: AgentLoop 配置或 max_steps 类型无效。
+            ValueError: max_steps 不是正整数。
         """
         self.client = client  # 模型客户端，由 providers 创建。
         self.model = model  # 当前 Agent 使用的实际模型名称。
-        self.tool_engine = tool_engine  # 工具定义与执行入口。
-        self.max_steps = max_steps  # 防止模型持续调用工具而无法结束。
-        self.system_prompt = system_prompt  # 新会话需要保留的系统提示词。
-        self.hook_engine = hook_engine or (  # 与工具引擎共享的生命周期 Hook。
-            tool_engine.hook_engine if tool_engine is not None else None
+        self.tool_engine = tool_engine or ToolEngine()  # 工具定义与执行入口。
+        self.context_engine = context_engine or ContextEngine()  # 模型上下文组装入口。
+        agent_loop_config = config.get("agent_loop")
+        if not isinstance(agent_loop_config, Mapping):
+            raise TypeError("配置中的 agent_loop 必须是对象")
+        resolved_max_steps = (
+            agent_loop_config.get("max_steps") if max_steps is None else max_steps
         )
-        if self.tool_engine is not None and self.hook_engine is not None:
+        if not isinstance(resolved_max_steps, int) or isinstance(
+            resolved_max_steps, bool
+        ):
+            raise TypeError("max_steps 必须是整数")
+        if resolved_max_steps <= 0:
+            raise ValueError("max_steps 必须大于 0")
+        self.max_steps = resolved_max_steps  # 单次用户输入的最大模型调用轮数。
+        self.hook_engine = hook_engine or (  # 与工具引擎共享的生命周期 Hook。
+            self.tool_engine.hook_engine
+        )
+        if self.hook_engine is not None:
             self.tool_engine.hook_engine = self.hook_engine
         model_config = config["models"][config["current_model"]]
         configured_parameters = model_config.get("parameters", {})
@@ -64,10 +81,7 @@ class AgentLoop:
             if default_request_options is None
             else default_request_options
         )  # 当前模型的默认参数，单次调用参数可以覆盖它。
-        self.messages: list[dict[str, Any]] = []  # 跨轮保存的完整对话历史。
-
-        if system_prompt:
-            self.messages.append({"role": "system", "content": system_prompt})
+        self.messages: list[dict[str, Any]] = []  # 已完成轮次的原始对话历史。
 
     def run(
         self,
@@ -76,10 +90,10 @@ class AgentLoop:
         hook_scope: HookScope | None = None,
         **request_options: Any,
     ) -> str:
-        """处理一条用户输入，直到模型返回最终文本。
+        """处理一轮用户输入，持续执行模型和工具直到返回文本。
 
         Args:
-            user_input: 本轮用户消息。
+            user_input: 当前轮次的用户输入。
             hook_scope: 可选的租户、用户、会话和运行范围。
             **request_options: 透传给 Chat Completions API 的其他参数。
 
@@ -87,22 +101,31 @@ class AgentLoop:
             模型结束工具调用后返回的最终文本。
 
         Raises:
+            TypeError: 用户输入不是字符串。
             RuntimeError: 工具调用循环超过 ``max_steps``。
         """
-        self.messages.append({"role": "user", "content": user_input})
+        if not isinstance(user_input, str):
+            raise TypeError("user_input 必须是字符串")
+
         scope = hook_scope or HookScope()
+        active_turn: list[dict[str, Any]] = [
+            {"role": "user", "content": user_input}
+        ]
 
         for step_index in range(self.max_steps):
+            model_messages = self.context_engine.get_final_context(
+                history=self.messages,
+                active_turn=active_turn,
+            )
             options = copy.deepcopy({**self.default_request_options, **request_options})
-            if self.tool_engine:
-                definitions = self.tool_engine.get_definitions()
-                if definitions:
-                    options["tools"] = definitions
+            definitions = self.tool_engine.get_definitions()
+            if definitions:
+                options["tools"] = definitions
 
             metadata: dict[str, Any] = {"step": step_index + 1}
             payload = {
                 "model": self.model,
-                "messages": copy.deepcopy(self.messages),
+                "messages": copy.deepcopy(model_messages),
                 "request_options": options,
             }
             try:
@@ -113,24 +136,24 @@ class AgentLoop:
                     metadata=metadata,
                 )
                 model = before_context.payload.get("model")
-                messages = before_context.payload.get("messages")
+                hooked_messages = before_context.payload.get("messages")
                 hooked_options = before_context.payload.get("request_options")
                 if not isinstance(model, str) or not model:
                     raise ValueError("before_model_request 必须保留非空字符串 model")
-                if not isinstance(messages, list) or not all(
-                    isinstance(message, Mapping) for message in messages
+                if not isinstance(hooked_messages, list) or not all(
+                    isinstance(message, Mapping) for message in hooked_messages
                 ):
-                    raise ValueError(
+                    raise TypeError(
                         "before_model_request 必须保留消息对象列表 messages"
                     )
                 if not isinstance(hooked_options, Mapping):
-                    raise ValueError(
+                    raise TypeError(
                         "before_model_request 必须保留对象类型 request_options"
                     )
 
                 response = self.client.chat.completions.create(
                     model=model,
-                    messages=[dict(message) for message in messages],  # type: ignore[arg-type]
+                    messages=[dict(message) for message in hooked_messages],  # type: ignore[arg-type]
                     **dict(hooked_options),
                 )
                 message = response.choices[0].message
@@ -156,13 +179,14 @@ class AgentLoop:
                     raise hook_error from error
                 raise
 
-            self.messages.append(assistant_message)
+            active_turn.append(assistant_message)
 
             if not message.tool_calls:
+                self.messages.extend(active_turn)
                 return message.content or ""
 
             for tool_call in message.tool_calls:
-                self.messages.append(
+                active_turn.append(
                     self._execute_tool(
                         tool_call,
                         hook_scope=scope,
@@ -179,8 +203,7 @@ class AgentLoop:
             None。
         """
         self.messages.clear()
-        if self.system_prompt:
-            self.messages.append({"role": "system", "content": self.system_prompt})
+        # TODO: 滚动历史摘要接入后，同步重置 ContextEngine 的会话状态。
 
     def _execute_tool(
         self,
@@ -200,17 +223,13 @@ class AgentLoop:
             可追加到对话历史的 ``role=tool`` 消息。
 
         Raises:
-            RuntimeError: 当前 Agent 没有配置工具引擎。
             HookExecutionError: 关键 Hook 自身执行失败。
         """
-        if not self.tool_engine:
-            raise RuntimeError("Agent 未配置工具引擎")
-
         tool_name = tool_call.function.name
         try:
             arguments = json.loads(tool_call.function.arguments or "{}")
             if not isinstance(arguments, dict):
-                raise ValueError(f"工具参数必须是 JSON 对象: {tool_name}")
+                raise TypeError(f"工具参数必须是 JSON 对象: {tool_name}")
 
             result = self.tool_engine.execute(
                 tool_name,
@@ -228,7 +247,7 @@ class AgentLoop:
             )
         except HookExecutionError:
             raise
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - 工具错误需返回模型以便纠正。
             content = json.dumps(
                 {
                     "ok": False,

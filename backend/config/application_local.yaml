@@ -6,6 +6,17 @@ tenants:
     default_user: dbh
     session_name: pe
 
+agent_loop:
+  max_steps: 8
+
+context:
+  compression:
+    tool_cleanup_threshold_chars: 60000
+    turn_compaction_threshold_chars: 80000
+    hard_limit_chars: 100000
+    keep_recent_turns: 4
+    summary_max_chars: 12000
+
 current_model: KIMI-K26
 
 models:

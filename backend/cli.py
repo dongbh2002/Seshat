@@ -86,11 +86,11 @@ def create_default_runtime() -> Runtime:
         client=client,
         model=model,
         tool_engine=tool_engine,
+        context_engine=ContextEngine(),
         hook_engine=hook_engine,
     )
     return Runtime(
         agent_loop=agent_loop,
-        context_engine=ContextEngine(),
         hook_engine=hook_engine,
     )
 

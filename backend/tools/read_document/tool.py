@@ -9,7 +9,7 @@ from zipfile import BadZipFile, ZipFile
 
 from backend.tools.base import BaseTool, ToolImpact
 from backend.tools.read_document.models import _DocumentBlock
-from backend.tools.read_document.parser import _DocxParser, _NAMESPACES
+from backend.tools.read_document.parser import _NAMESPACES, _DocxParser
 
 
 class ReadDocumentTool(BaseTool):
@@ -21,6 +21,8 @@ class ReadDocumentTool(BaseTool):
     )
     impact: ClassVar[ToolImpact] = ToolImpact.READ_ONLY  # 读取操作不改变文档状态。
     timeout_seconds: ClassVar[float] = 300.0  # DOCX 读取的默认超时时间。
+    min_character_limit: ClassVar[int] = 1_000  # 允许的最小返回字符上限。
+    max_character_limit: ClassVar[int] = 100_000  # 允许的最大返回字符上限。
     default_max_chars: ClassVar[int] = 20_000  # 单次返回 Markdown 的默认字符上限。
     parameters: ClassVar[dict[str, Any]] = {  # 文档读取工具的输入参数定义。
         "type": "object",
@@ -47,9 +49,9 @@ class ReadDocumentTool(BaseTool):
             },
             "max_chars": {
                 "type": "integer",
-                "minimum": 0,
-                "maximum": 1000000,
-                "default": 20000,
+                "minimum": min_character_limit,
+                "maximum": max_character_limit,
+                "default": default_max_chars,
                 "description": "单次返回 Markdown 的字符上限，按完整内容块截断。",
             },
         },
@@ -108,7 +110,7 @@ class ReadDocumentTool(BaseTool):
         if (
             not isinstance(max_chars, int)
             or isinstance(max_chars, bool)
-            or not 1000 <= max_chars <= 100_000
+            or not self.min_character_limit <= max_chars <= self.max_character_limit
         ):
             raise ValueError("max_chars 超出范围")
 

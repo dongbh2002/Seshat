@@ -1,4 +1,4 @@
-"""Runtime 顶层编排器，串联上下文处理与 Agent 多轮交互。"""
+"""Runtime 顶层入口，处理运行范围和 Agent 调用生命周期。"""
 
 from __future__ import annotations
 
@@ -44,12 +44,12 @@ def _get_default_hook_scope() -> HookScope:
 
 
 class Runtime:
-    """协调上下文引擎和 Agent 循环，提供统一的对话运行入口。"""
+    """处理用户输入和运行级 Hook，提供统一的对话入口。"""
 
     def __init__(
         self,
         agent_loop: AgentLoop,
-        context_engine: ContextEngine,
+        context_engine: ContextEngine | None = None,
         hook_engine: HookEngine | None = None,
         hook_scope: HookScope | None = None,
     ) -> None:
@@ -57,7 +57,7 @@ class Runtime:
 
         Args:
             agent_loop: 负责模型请求和工具调用循环的 Agent。
-            context_engine: 负责上下文组装和压缩的引擎。
+            context_engine: 可选的上下文引擎；提供时注入 AgentLoop。
             hook_engine: Runtime、模型和工具共享的可选 HookEngine。
             hook_scope: 可选的租户、用户和会话范围；默认从配置读取。
 
@@ -65,19 +65,19 @@ class Runtime:
             None。
         """
         self.agent_loop = agent_loop  # 模型与工具调用循环。
-        self.context_engine = context_engine  # 上下文组装与压缩入口。
+        if context_engine is not None:
+            self.agent_loop.context_engine = context_engine
         self.hook_engine = hook_engine or agent_loop.hook_engine  # 共享 Hook 入口。
         self.hook_scope = hook_scope or _get_default_hook_scope()  # 基础运行范围。
         if self.hook_engine is not None:
             self.agent_loop.hook_engine = self.hook_engine
-            if self.agent_loop.tool_engine is not None:
-                self.agent_loop.tool_engine.hook_engine = self.hook_engine
+            self.agent_loop.tool_engine.hook_engine = self.hook_engine
 
     def run(self, user_input: str, **request_options: Any) -> str:
         """执行一轮完整交互，并保留消息供后续轮次继续使用。
 
-        交互流程为：整理历史上下文、压缩上下文、加入用户输入、调用模型、
-        执行模型请求的工具，最后返回模型文本回复。
+        AgentLoop 会在每次模型请求前调用 ContextEngine，包括工具
+        返回结果后发起的后续模型请求。
 
         Args:
             user_input: 当前轮次的用户输入。
@@ -102,15 +102,9 @@ class Runtime:
             hooked_user_input = before_context.payload.get("user_input")
             hooked_options = before_context.payload.get("request_options")
             if not isinstance(hooked_user_input, str):
-                raise ValueError("before_runtime 必须保留字符串类型 user_input")
+                raise TypeError("before_runtime 必须保留字符串类型 user_input")
             if not isinstance(hooked_options, Mapping):
-                raise ValueError("before_runtime 必须保留对象类型 request_options")
-
-            context = self.context_engine.get_final_context(self.agent_loop.messages)
-            compressed_context = self.context_engine.compress(context)
-
-            # TODO: 静态上下文启用后，应由 ContextEngine 唯一维护，避免重复注入。
-            self.agent_loop.messages = compressed_context
+                raise TypeError("before_runtime 必须保留对象类型 request_options")
 
             result = self.agent_loop.run(
                 hooked_user_input,

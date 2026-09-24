@@ -47,12 +47,14 @@ def test_create_default_runtime_keeps_multi_turn_messages_and_tools(
         "messages"
     ]
     assert [message["role"] for message in second_messages] == [
+        "system",
         "user",
         "assistant",
         "user",
     ]
-    assert second_messages[0]["content"] == "第一轮问题"
-    assert second_messages[2]["content"] == "第二轮问题"
+    assert "Seshat" in second_messages[0]["content"]
+    assert second_messages[1]["content"] == "第一轮问题"
+    assert second_messages[3]["content"] == "第二轮问题"
 
     assert runtime.agent_loop.tool_engine is not None
     definitions = runtime.agent_loop.tool_engine.get_definitions()
