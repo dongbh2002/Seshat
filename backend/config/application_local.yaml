@@ -14,7 +14,7 @@ models:
     base_url_env: KIMI-K26_BASE_URL
     model_name_env: KIMI-K26_MODEL_NAME
     parameters:
-      max_completion_tokens: 64
+      max_completion_tokens: 50000
       extra_body:
         thinking:
           type: disabled

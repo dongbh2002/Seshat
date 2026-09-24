@@ -6,7 +6,7 @@ import copy
 from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from lxml import etree  # pyright: ignore[reportAttributeAccessIssue]
@@ -16,6 +16,9 @@ from backend.tools.read_document.parser import (
     _DocxParser,
     _qualified_name,
 )
+
+if TYPE_CHECKING:
+    from typing_extensions import Self
 
 _XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 _PACKAGE_RELATIONSHIPS_NAMESPACE = (
@@ -86,7 +89,7 @@ class DocxEditor:
         self._next_id = self._maximum_existing_id() + 1  # 下一可用修订或批注 ID。
         self._insert_tails: dict[str, Any] = {}  # 同一锚点连续插入时的末尾元素。
 
-    def __enter__(self) -> DocxEditor:
+    def __enter__(self) -> Self:
         """进入编辑器上下文。
 
         Returns:

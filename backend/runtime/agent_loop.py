@@ -14,6 +14,7 @@ from backend.runtime.hook_engine import (
     HookContext,
     HookEngine,
     HookEvent,
+    HookExecutionError,
     HookScope,
 )
 from backend.runtime.tool_engine import ToolEngine
@@ -200,30 +201,44 @@ class AgentLoop:
 
         Raises:
             RuntimeError: 当前 Agent 没有配置工具引擎。
-            ValueError: 工具参数不是 JSON 对象。
+            HookExecutionError: 关键 Hook 自身执行失败。
         """
         if not self.tool_engine:
             raise RuntimeError("Agent 未配置工具引擎")
 
         tool_name = tool_call.function.name
-        arguments = json.loads(tool_call.function.arguments or "{}")
-        if not isinstance(arguments, dict):
-            raise ValueError(f"工具参数必须是 JSON 对象: {tool_name}")
+        try:
+            arguments = json.loads(tool_call.function.arguments or "{}")
+            if not isinstance(arguments, dict):
+                raise ValueError(f"工具参数必须是 JSON 对象: {tool_name}")
 
-        result = self.tool_engine.execute(
-            tool_name,
-            arguments,
-            hook_scope=hook_scope,
-            hook_metadata={
-                "step": step,
-                "tool_call_id": tool_call.id,
-            },
-        )
-        content = (
-            result
-            if isinstance(result, str)
-            else json.dumps(result, ensure_ascii=False, default=str)
-        )
+            result = self.tool_engine.execute(
+                tool_name,
+                arguments,
+                hook_scope=hook_scope,
+                hook_metadata={
+                    "step": step,
+                    "tool_call_id": tool_call.id,
+                },
+            )
+            content = (
+                result
+                if isinstance(result, str)
+                else json.dumps(result, ensure_ascii=False, default=str)
+            )
+        except HookExecutionError:
+            raise
+        except Exception as error:
+            content = json.dumps(
+                {
+                    "ok": False,
+                    "tool": tool_name,
+                    "error_type": type(error).__name__,
+                    "error": str(error),
+                    "suggestion": "请根据错误信息修正参数后重试。",
+                },
+                ensure_ascii=False,
+            )
         return {
             "role": "tool",
             "tool_call_id": tool_call.id,
