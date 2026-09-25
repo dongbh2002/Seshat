@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
@@ -25,16 +26,17 @@ def _isolate_cli_log(
     Returns:
         None。
     """
-    monkeypatch.setitem(
-        cli.config,
-        "logging",
-        {
-            "level": "INFO",
-            "path": str(tmp_path / "seshat.log"),
-            "max_bytes": 1_048_576,
-            "backup_count": 1,
-        },
+    settings = cli.load_settings()
+    isolated_settings = replace(
+        settings,
+        logging=replace(
+            settings.logging,
+            path=str(tmp_path / "seshat.log"),
+            max_bytes=1_048_576,
+            backup_count=1,
+        ),
     )
+    monkeypatch.setattr(cli, "load_settings", MagicMock(return_value=isolated_settings))
 
 
 def test_create_default_runtime_keeps_multi_turn_messages_and_tools(
@@ -63,7 +65,7 @@ def test_create_default_runtime_keeps_multi_turn_messages_and_tools(
         MagicMock(return_value=(fake_client, "fake-model")),
     )
 
-    runtime = cli.create_default_runtime()
+    runtime = cli.create_default_runtime(cli.load_settings())
     first_reply = runtime.run("第一轮问题")
     second_reply = runtime.run("第二轮问题")
 

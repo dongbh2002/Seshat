@@ -1,6 +1,6 @@
 """模型客户端集成测试，用于验证真实 LLM 对话是否可用。"""
 
-from backend.config import config
+from backend.config import load_settings
 from backend.providers import create_model_client
 
 
@@ -10,13 +10,13 @@ def test_llm_chat_with_hello() -> None:
     Returns:
         None；模型无有效回复时由断言报告失败。
     """
-    client, model = create_model_client()
-    model_config = config["models"][config["current_model"]]
+    settings = load_settings()
+    client, model = create_model_client(settings=settings)
 
     response = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": "你好"}],
-        **model_config.get("parameters", {}),
+        **settings.active_model.parameters,
     )
 
     content = response.choices[0].message.content

@@ -1,8 +1,26 @@
-"""项目配置包，在首次导入时加载 YAML，并向其他模块提供共享配置。"""
+"""项目配置包，对外提供显式加载入口和类型化配置对象。"""
 
-from backend.config.config import load_config
+from backend.config.config import load_config, load_settings
+from backend.config.settings import (
+    AgentLoopSettings,
+    CompressionSettings,
+    ContextSettings,
+    IdentitySettings,
+    LoggingSettings,
+    ModelSettings,
+    Settings,
+    TenantSettings,
+)
 
-
-config = load_config()
-
-__all__ = ["config", "load_config"]
+__all__ = [
+    "AgentLoopSettings",
+    "CompressionSettings",
+    "ContextSettings",
+    "IdentitySettings",
+    "LoggingSettings",
+    "ModelSettings",
+    "Settings",
+    "TenantSettings",
+    "load_config",
+    "load_settings",
+]

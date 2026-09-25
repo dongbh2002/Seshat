@@ -7,7 +7,6 @@ from collections.abc import Mapping
 from typing import Any
 from uuid import uuid4
 
-from backend.config import config
 from backend.runtime.agent_loop import AgentLoop
 from backend.runtime.hook_engine import (
     HookContext,
@@ -17,31 +16,6 @@ from backend.runtime.hook_engine import (
 )
 
 
-def _get_default_hook_scope() -> HookScope:
-    """从当前项目配置生成默认租户、用户和会话 Hook 范围。
-
-    Returns:
-        不包含 run_id 的默认 HookScope。
-    """
-    tenant_value = config.get("default_tenant")
-    tenant_id = str(tenant_value) if tenant_value is not None else None
-    tenants = config.get("tenants", {})
-    tenant_config = (
-        tenants.get(tenant_id, {})
-        if tenant_id is not None and isinstance(tenants, Mapping)
-        else {}
-    )
-    if not isinstance(tenant_config, Mapping):
-        tenant_config = {}
-    user_value = tenant_config.get("default_user")
-    session_value = tenant_config.get("session_name")
-    return HookScope(
-        tenant_id=tenant_id,
-        user_id=str(user_value) if user_value is not None else None,
-        session_name=str(session_value) if session_value is not None else None,
-    )
-
-
 class Runtime:
     """处理用户输入和运行级 Hook，提供统一的对话入口。"""
 
@@ -49,21 +23,21 @@ class Runtime:
         self,
         agent_loop: AgentLoop,
         hook_engine: HookEngine,
-        hook_scope: HookScope | None = None,
+        hook_scope: HookScope,
     ) -> None:
         """初始化运行时所需组件。
 
         Args:
             agent_loop: 负责模型请求和工具调用循环的 Agent。
             hook_engine: 由外部装配并负责 Runtime 生命周期事件的引擎。
-            hook_scope: 可选的租户、用户和会话范围；默认从配置读取。
+            hook_scope: 由装配入口解析好的租户、用户和会话范围。
 
         Returns:
             None。
         """
         self.agent_loop = agent_loop  # 模型与工具调用循环。
         self.hook_engine = hook_engine  # 外部装配的 Runtime 生命周期 Hook 入口。
-        self.hook_scope = hook_scope or _get_default_hook_scope()  # 基础运行范围。
+        self.hook_scope = hook_scope  # 基础运行范围，由装配入口显式提供。
 
     def run(self, user_input: str, **request_options: Any) -> str:
         """执行一轮完整交互，并保留消息供后续轮次继续使用。
