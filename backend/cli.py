@@ -81,6 +81,7 @@ def create_default_runtime() -> Runtime:
 
     hook_engine = HookEngine()
     LoggingHook().register(hook_engine)
+    context_engine = ContextEngine()
     tool_engine = ToolEngine(hook_engine=hook_engine)
     tool_engine.register(ReadDocumentTool(document_root))
     tool_engine.register(WriteDocumentTool(document_root))
@@ -90,7 +91,7 @@ def create_default_runtime() -> Runtime:
         client=client,
         model=model,
         tool_engine=tool_engine,
-        context_engine=ContextEngine(),
+        context_engine=context_engine,
         hook_engine=hook_engine,
     )
     return Runtime(

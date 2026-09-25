@@ -1,7 +1,7 @@
 """Runtime 集成测试，验证不使用工具时的真实多轮模型交互。"""
 
 from backend.providers import create_model_client
-from backend.runtime import AgentLoop, ContextEngine, Runtime
+from backend.runtime import AgentLoop, ContextEngine, HookEngine, Runtime, ToolEngine
 
 
 def test_runtime_multi_turn_chat_without_tools() -> None:
@@ -11,9 +11,18 @@ def test_runtime_multi_turn_chat_without_tools() -> None:
         None；模型未返回有效结果或未保留上下文时由断言报告失败。
     """
     client, model = create_model_client()
+    hook_engine = HookEngine()
+    context_engine = ContextEngine()
+    tool_engine = ToolEngine(hook_engine=hook_engine)
     runtime = Runtime(
-        agent_loop=AgentLoop(client=client, model=model),
-        context_engine=ContextEngine(),
+        agent_loop=AgentLoop(
+            client=client,
+            model=model,
+            tool_engine=tool_engine,
+            context_engine=context_engine,
+            hook_engine=hook_engine,
+        ),
+        hook_engine=hook_engine,
     )
 
     first_reply = runtime.run("请记住数字 233，并只回复“已记住”。")

@@ -9,7 +9,6 @@ from uuid import uuid4
 
 from backend.config import config
 from backend.runtime.agent_loop import AgentLoop
-from backend.runtime.context_engine import ContextEngine
 from backend.runtime.hook_engine import (
     HookContext,
     HookEngine,
@@ -49,29 +48,22 @@ class Runtime:
     def __init__(
         self,
         agent_loop: AgentLoop,
-        context_engine: ContextEngine | None = None,
-        hook_engine: HookEngine | None = None,
+        hook_engine: HookEngine,
         hook_scope: HookScope | None = None,
     ) -> None:
         """初始化运行时所需组件。
 
         Args:
             agent_loop: 负责模型请求和工具调用循环的 Agent。
-            context_engine: 可选的上下文引擎；提供时注入 AgentLoop。
-            hook_engine: Runtime、模型和工具共享的可选 HookEngine。
+            hook_engine: 由外部装配并负责 Runtime 生命周期事件的引擎。
             hook_scope: 可选的租户、用户和会话范围；默认从配置读取。
 
         Returns:
             None。
         """
         self.agent_loop = agent_loop  # 模型与工具调用循环。
-        if context_engine is not None:
-            self.agent_loop.context_engine = context_engine
-        self.hook_engine = hook_engine or agent_loop.hook_engine  # 共享 Hook 入口。
+        self.hook_engine = hook_engine  # 外部装配的 Runtime 生命周期 Hook 入口。
         self.hook_scope = hook_scope or _get_default_hook_scope()  # 基础运行范围。
-        if self.hook_engine is not None:
-            self.agent_loop.hook_engine = self.hook_engine
-            self.agent_loop.tool_engine.hook_engine = self.hook_engine
 
     def run(self, user_input: str, **request_options: Any) -> str:
         """执行一轮完整交互，并保留消息供后续轮次继续使用。
@@ -165,6 +157,5 @@ class Runtime:
             result=result,
             error=error,
         )
-        if self.hook_engine is not None:
-            self.hook_engine.emit(context)
+        self.hook_engine.emit(context)
         return context
