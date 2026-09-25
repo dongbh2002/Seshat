@@ -9,7 +9,7 @@ from typing import Any
 
 from jinja2 import Environment, StrictUndefined
 
-from backend.config import config
+from backend.config import Settings
 
 Context = list[dict[str, Any]]
 _PROMPT_DIRECTORY = Path(__file__).resolve().parents[1] / "prompts"
@@ -23,11 +23,13 @@ class ContextEngine:
 
     def __init__(
         self,
+        settings: Settings,
         system_prompt_path: Path | None = None,
     ) -> None:
         """加载系统提示词模板并初始化上下文引擎。
 
         Args:
+            settings: 启动入口加载并注入的类型化项目配置。
             system_prompt_path: 可选的系统提示词模板路径，默认使用项目模板。
 
         Returns:
@@ -35,7 +37,6 @@ class ContextEngine:
 
         Raises:
             FileNotFoundError: 系统提示词模板不存在。
-            TypeError: 上下文压缩配置或阈值类型无效。
             ValueError: 系统提示词渲染后为空。
         """
         prompt_path = system_prompt_path or _DEFAULT_SYSTEM_PROMPT_PATH
@@ -49,49 +50,25 @@ class ContextEngine:
         self._template_environment = Environment(  # 所有上下文模板共用的 Jinja 环境。
             undefined=StrictUndefined
         )
-        context_config = config.get("context")
-        if not isinstance(context_config, Mapping):
-            raise TypeError("配置中的 context 必须是对象")
-        compression_config = context_config.get("compression")
-        if not isinstance(compression_config, Mapping):
-            raise TypeError("配置中的 context.compression 必须是对象")
+        compression = settings.context.compression
         self.tool_cleanup_threshold_chars = (  # 第一级工具结果清理阈值。
-            self._get_positive_config_int(
-                compression_config,
-                "tool_cleanup_threshold_chars",
-            )
+            compression.tool_cleanup_threshold_chars
         )
         self.turn_compaction_threshold_chars = (  # 第二级早期轮次结构化阈值。
-            self._get_positive_config_int(
-                compression_config,
-                "turn_compaction_threshold_chars",
-            )
+            compression.turn_compaction_threshold_chars
         )
-        self.hard_limit_chars = self._get_positive_config_int(  # 第三级硬上限。
-            compression_config,
-            "hard_limit_chars",
+        self.hard_limit_chars = compression.hard_limit_chars  # 第三级硬上限。
+        self.keep_recent_turns = (  # 默认保留的近期完整轮次数。
+            compression.keep_recent_turns
         )
-        self.keep_recent_turns = self._get_positive_config_int(  # 默认保留的近期完整轮次数。
-            compression_config,
-            "keep_recent_turns",
+        self.summary_max_chars = (  # 历史结构化记录的字符上限。
+            compression.summary_max_chars
         )
-        self.summary_max_chars = self._get_positive_config_int(  # 历史结构化记录的字符上限。
-            compression_config,
-            "summary_max_chars",
-        )
-        if not (
-            self.tool_cleanup_threshold_chars
-            < self.turn_compaction_threshold_chars
-            < self.hard_limit_chars
-        ):
-            raise ValueError("上下文压缩阈值必须按第一级、第二级、硬上限递增")
         self.system_prompt = self._render_prompt(  # 已渲染的基础系统提示词。
             self.system_prompt_path
         )
         if not self.system_prompt:
-            raise ValueError(
-                f"系统提示词模板渲染结果为空: {self.system_prompt_path}"
-            )
+            raise ValueError(f"系统提示词模板渲染结果为空: {self.system_prompt_path}")
 
     def get_final_context(
         self,
@@ -198,32 +175,6 @@ class ContextEngine:
         return recent_context, history_summary
 
     @staticmethod
-    def _get_positive_config_int(
-        compression_config: Mapping[str, Any],
-        key: str,
-    ) -> int:
-        """读取并校验上下文压缩的正整数配置。
-
-        Args:
-            compression_config: ``context.compression`` 配置对象。
-            key: 需要读取的配置键。
-
-        Returns:
-            经过校验的正整数配置。
-
-        Raises:
-            TypeError: 配置值不是整数。
-            ValueError: 配置值不大于零。
-        """
-        value = compression_config.get(key)
-        config_key = f"context.compression.{key}"
-        if not isinstance(value, int) or isinstance(value, bool):
-            raise TypeError(f"{config_key} 必须是整数")
-        if value <= 0:
-            raise ValueError(f"{config_key} 必须大于 0")
-        return value
-
-    @staticmethod
     def _group_completed_turns(context: Context) -> list[Context]:
         """按用户消息边界将已完成历史分成完整轮次。
 
@@ -314,9 +265,7 @@ class ContextEngine:
             elif role == "assistant" and isinstance(content, str) and content:
                 assistant_text = content
             elif role == "tool":
-                tool_records.append(
-                    self._summarize_tool_message(message, tool_names)
-                )
+                tool_records.append(self._summarize_tool_message(message, tool_names))
 
         lines = [
             f"### 历史轮次 {turn_number}",

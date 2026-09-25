@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
@@ -15,13 +14,14 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from backend.config import config
+from backend.config import Settings, load_settings
 from backend.logging import LoggingHook, configure_logging, log_event
 from backend.providers import create_model_client
 from backend.runtime import (
     AgentLoop,
     ContextEngine,
     HookEngine,
+    HookScope,
     Runtime,
     ToolEngine,
 )
@@ -32,71 +32,48 @@ _TENANT_PACKS_ROOT = _PROJECT_ROOT / "backend" / "data_agent" / "tenant_packs"
 _LOGGER = logging.getLogger(__name__)
 
 
-def _get_default_identity() -> tuple[str, str, str]:
-    """从项目配置读取默认租户、用户和会话名称。
-
-    Returns:
-        ``(tenant_id, user_id, session_name)`` 三元组。
-
-    Raises:
-        ValueError: 默认租户、用户或会话配置缺失或类型无效。
-        TypeError: 租户配置不是对象。
-    """
-    tenant_value = config.get("default_tenant")
-    if tenant_value is None:
-        raise ValueError("配置缺少 default_tenant")
-    tenant_id = str(tenant_value)
-
-    tenants = config.get("tenants")
-    if not isinstance(tenants, Mapping):
-        raise TypeError("配置中的 tenants 必须是对象")
-    tenant_config = tenants.get(tenant_id)
-    if not isinstance(tenant_config, Mapping):
-        raise TypeError(f"默认租户配置必须是对象: {tenant_id}")
-
-    user_value = tenant_config.get("default_user")
-    session_value = tenant_config.get("session_name")
-    if user_value is None:
-        raise ValueError(f"租户 {tenant_id} 缺少 default_user")
-    if session_value is None:
-        raise ValueError(f"租户 {tenant_id} 缺少 session_name")
-    return tenant_id, str(user_value), str(session_value)
-
-
-def create_default_runtime() -> Runtime:
+def create_default_runtime(settings: Settings) -> Runtime:
     """按默认配置创建注册好 DOCX 读写工具和 Hook 的 Runtime。
+
+    Args:
+        settings: CLI 启动时加载一次并注入各组件的类型化项目配置。
 
     Returns:
         可持续调用 ``run`` 进行进程内多轮对话的 Runtime。
 
     Raises:
         NotADirectoryError: 默认租户用户目录不存在。
-        ValueError: 默认租户、用户或会话配置无效。
         KeyError: 模型环境变量缺失。
     """
-    tenant_id, user_id, _ = _get_default_identity()
-    document_root = _TENANT_PACKS_ROOT / tenant_id / user_id
+    identity = settings.default_identity
+    document_root = _TENANT_PACKS_ROOT / identity.tenant_id / identity.user_id
     if not document_root.is_dir():
         raise NotADirectoryError(f"默认文档目录不存在: {document_root}")
 
     hook_engine = HookEngine()
     LoggingHook().register(hook_engine)
-    context_engine = ContextEngine()
+    context_engine = ContextEngine(settings=settings)
     tool_engine = ToolEngine(hook_engine=hook_engine)
     tool_engine.register(ReadDocumentTool(document_root))
     tool_engine.register(WriteDocumentTool(document_root))
 
-    client, model = create_model_client()
+    client, model = create_model_client(settings=settings)
     agent_loop = AgentLoop(
         client=client,
         model=model,
         tool_engine=tool_engine,
         context_engine=context_engine,
         hook_engine=hook_engine,
+        settings=settings,
     )
     return Runtime(
         agent_loop=agent_loop,
         hook_engine=hook_engine,
+        hook_scope=HookScope(
+            tenant_id=identity.tenant_id,
+            user_id=identity.user_id,
+            session_name=identity.session_name,
+        ),
     )
 
 
@@ -204,6 +181,7 @@ def _build_pixel_wordmark() -> Text:
 
 def _print_banner(
     console: Console,
+    model_name: str,
     tenant_id: str,
     user_id: str,
     session_name: str,
@@ -212,6 +190,7 @@ def _print_banner(
 
     Args:
         console: 用于渲染终端样式的 Rich Console。
+        model_name: 当前启用的模型配置名称。
         tenant_id: 当前默认租户标识。
         user_id: 当前默认用户标识。
         session_name: 当前默认会话名称。
@@ -229,7 +208,7 @@ def _print_banner(
     details = Table.grid(padding=(0, 2))
     details.add_column(width=9, style="dim")
     details.add_column(style="#79c0ff")
-    details.add_row("MODEL", str(config["current_model"]))
+    details.add_row("MODEL", model_name)
     details.add_row("WORKSPACE", f"{tenant_id} / {user_id}")
     details.add_row("SESSION", session_name)
 
@@ -372,18 +351,18 @@ def main() -> int:
     """
     console = Console(highlight=False)
     try:
-        logging_settings = config.get("logging", {})
+        settings = load_settings()
         log_path = configure_logging(
-            logging_settings,
+            settings.logging,
             base_directory=_PROJECT_ROOT,
         )
-    except Exception as error:  # noqa: BLE001 - 日志配置失败时 CLI 无法可靠启动。
-        print(f"Seshat 日志初始化失败：{error}", file=sys.stderr)
+    except Exception as error:  # noqa: BLE001 - 配置或日志失败时 CLI 无法可靠启动。
+        print(f"Seshat 配置或日志初始化失败：{error}", file=sys.stderr)
         return 1
 
     try:
-        tenant_id, user_id, session_name = _get_default_identity()
-        runtime = create_default_runtime()
+        identity = settings.default_identity
+        runtime = create_default_runtime(settings)
     except Exception as error:  # noqa: BLE001 - CLI 边界需要展示所有启动错误。
         log_event(
             _LOGGER,
@@ -404,9 +383,9 @@ def main() -> int:
         "application_started",
         {
             "model": runtime.agent_loop.model,
-            "tenant_id": tenant_id,
-            "user_id": user_id,
-            "session_name": session_name,
+            "tenant_id": identity.tenant_id,
+            "user_id": identity.user_id,
+            "session_name": identity.session_name,
             "tools": [
                 definition.get("function", {}).get("name") for definition in definitions
             ],
@@ -414,7 +393,13 @@ def main() -> int:
         },
     )
 
-    _print_banner(console, tenant_id, user_id, session_name)
+    _print_banner(
+        console,
+        settings.current_model,
+        identity.tenant_id,
+        identity.user_id,
+        identity.session_name,
+    )
 
     while True:
         try:

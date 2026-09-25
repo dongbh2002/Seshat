@@ -9,7 +9,7 @@ from typing import Any
 
 from openai import OpenAI
 
-from backend.config import config
+from backend.config import Settings
 from backend.runtime.context_engine import ContextEngine
 from backend.runtime.hook_engine import (
     HookContext,
@@ -31,8 +31,7 @@ class AgentLoop:
         tool_engine: ToolEngine,
         context_engine: ContextEngine,
         hook_engine: HookEngine,
-        max_steps: int | None = None,
-        default_request_options: dict[str, Any] | None = None,
+        settings: Settings,
     ) -> None:
         """初始化 Agent 循环。
 
@@ -42,41 +41,22 @@ class AgentLoop:
             tool_engine: 由外部装配并负责工具定义和执行的引擎。
             context_engine: 由外部装配并负责模型上下文的引擎。
             hook_engine: 由外部装配并负责模型生命周期事件的引擎。
-            max_steps: 可选的最大模型调用轮数；省略时读取 YAML 配置。
-            default_request_options: 每次模型调用默认使用的请求参数。
+            settings: 启动入口加载并注入的类型化项目配置。
 
         Returns:
             None。
-
-        Raises:
-            TypeError: AgentLoop 配置或 max_steps 类型无效。
-            ValueError: max_steps 不是正整数。
         """
         self.client = client  # 模型客户端，由 providers 创建。
         self.model = model  # 当前 Agent 使用的实际模型名称。
         self.tool_engine = tool_engine  # 外部装配的工具定义与执行入口。
         self.context_engine = context_engine  # 外部装配的模型上下文组装入口。
         self.hook_engine = hook_engine  # 外部装配的模型生命周期 Hook 入口。
-        agent_loop_config = config.get("agent_loop")
-        if not isinstance(agent_loop_config, Mapping):
-            raise TypeError("配置中的 agent_loop 必须是对象")
-        resolved_max_steps = (
-            agent_loop_config.get("max_steps") if max_steps is None else max_steps
+        self.max_steps = (  # 单次用户输入的最大模型调用轮数。
+            settings.agent_loop.max_steps
         )
-        if not isinstance(resolved_max_steps, int) or isinstance(
-            resolved_max_steps, bool
-        ):
-            raise TypeError("max_steps 必须是整数")
-        if resolved_max_steps <= 0:
-            raise ValueError("max_steps 必须大于 0")
-        self.max_steps = resolved_max_steps  # 单次用户输入的最大模型调用轮数。
-        model_config = config["models"][config["current_model"]]
-        configured_parameters = model_config.get("parameters", {})
-        self.default_request_options = dict(
-            configured_parameters
-            if default_request_options is None
-            else default_request_options
-        )  # 当前模型的默认参数，单次调用参数可以覆盖它。
+        self.default_request_options = (  # 当前模型的默认请求参数。
+            dict(settings.active_model.parameters)
+        )
         self.messages: list[dict[str, Any]] = []  # 已完成轮次的原始对话历史。
 
     def run(
