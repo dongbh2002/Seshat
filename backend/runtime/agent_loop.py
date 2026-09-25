@@ -108,9 +108,7 @@ class AgentLoop:
             raise TypeError("user_input 必须是字符串")
 
         scope = hook_scope or HookScope()
-        active_turn: list[dict[str, Any]] = [
-            {"role": "user", "content": user_input}
-        ]
+        active_turn: list[dict[str, Any]] = [{"role": "user", "content": user_input}]
 
         for step_index in range(self.max_steps):
             model_messages = self.context_engine.get_final_context(
@@ -128,6 +126,7 @@ class AgentLoop:
                 "messages": copy.deepcopy(model_messages),
                 "request_options": options,
             }
+            executed_payload = payload
             try:
                 before_context = self._emit_hook(
                     HookEvent.BEFORE_MODEL_REQUEST,
@@ -135,6 +134,7 @@ class AgentLoop:
                     payload=payload,
                     metadata=metadata,
                 )
+                executed_payload = before_context.payload
                 model = before_context.payload.get("model")
                 hooked_messages = before_context.payload.get("messages")
                 hooked_options = before_context.payload.get("request_options")
@@ -159,19 +159,36 @@ class AgentLoop:
                 message = response.choices[0].message
                 assistant_message = message.model_dump(exclude_none=True)
                 assistant_message["role"] = "assistant"
+                usage = getattr(response, "usage", None)
+                usage_data = (
+                    usage.model_dump(exclude_none=True)
+                    if hasattr(usage, "model_dump")
+                    else usage
+                )
+                response_result = {
+                    "response_id": getattr(response, "id", None),
+                    "model": getattr(response, "model", model),
+                    "finish_reason": getattr(
+                        response.choices[0],
+                        "finish_reason",
+                        None,
+                    ),
+                    "message": assistant_message,
+                    "usage": usage_data,
+                }
                 self._emit_hook(
                     HookEvent.AFTER_MODEL_RESPONSE,
                     scope=scope,
-                    payload=before_context.payload,
+                    payload=executed_payload,
                     metadata=metadata,
-                    result=dict(assistant_message),
+                    result=response_result,
                 )
             except Exception as error:
                 try:
                     self._emit_hook(
                         HookEvent.MODEL_ERROR,
                         scope=scope,
-                        payload=payload,
+                        payload=executed_payload,
                         metadata=metadata,
                         error=error,
                     )
@@ -226,11 +243,27 @@ class AgentLoop:
             HookExecutionError: 关键 Hook 自身执行失败。
         """
         tool_name = tool_call.function.name
+        raw_arguments = tool_call.function.arguments or "{}"
         try:
-            arguments = json.loads(tool_call.function.arguments or "{}")
+            arguments = json.loads(raw_arguments)
             if not isinstance(arguments, dict):
                 raise TypeError(f"工具参数必须是 JSON 对象: {tool_name}")
+        except Exception as error:  # noqa: BLE001 - 参数错误需返回模型自行纠正。
+            self._emit_hook(
+                HookEvent.TOOL_CALL_ERROR,
+                scope=hook_scope,
+                payload={"name": tool_name, "arguments": raw_arguments},
+                metadata={"step": step, "tool_call_id": tool_call.id},
+                error=error,
+            )
+            content = self._build_tool_error_content(tool_name, error)
+            return {
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": content,
+            }
 
+        try:
             result = self.tool_engine.execute(
                 tool_name,
                 arguments,
@@ -248,21 +281,34 @@ class AgentLoop:
         except HookExecutionError:
             raise
         except Exception as error:  # noqa: BLE001 - 工具错误需返回模型以便纠正。
-            content = json.dumps(
-                {
-                    "ok": False,
-                    "tool": tool_name,
-                    "error_type": type(error).__name__,
-                    "error": str(error),
-                    "suggestion": "请根据错误信息修正参数后重试。",
-                },
-                ensure_ascii=False,
-            )
+            content = self._build_tool_error_content(tool_name, error)
         return {
             "role": "tool",
             "tool_call_id": tool_call.id,
             "content": content,
         }
+
+    @staticmethod
+    def _build_tool_error_content(tool_name: str, error: BaseException) -> str:
+        """生成可返回给模型的统一工具错误 JSON。
+
+        Args:
+            tool_name: 当前调用的工具名称。
+            error: 工具参数解析或执行过程中产生的异常。
+
+        Returns:
+            包含错误类型、错误说明和重试建议的 JSON 字符串。
+        """
+        return json.dumps(
+            {
+                "ok": False,
+                "tool": tool_name,
+                "error_type": type(error).__name__,
+                "error": str(error),
+                "suggestion": "请根据错误信息修正参数后重试。",
+            },
+            ensure_ascii=False,
+        )
 
     def _emit_hook(
         self,

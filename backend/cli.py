@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from collections.abc import Mapping
 from datetime import datetime
@@ -15,6 +16,7 @@ from rich.table import Table
 from rich.text import Text
 
 from backend.config import config
+from backend.logging import LoggingHook, configure_logging, log_event
 from backend.providers import create_model_client
 from backend.runtime import (
     AgentLoop,
@@ -27,6 +29,7 @@ from backend.tools import ReadDocumentTool, WriteDocumentTool
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _TENANT_PACKS_ROOT = _PROJECT_ROOT / "backend" / "data_agent" / "tenant_packs"
+_LOGGER = logging.getLogger(__name__)
 
 
 def _get_default_identity() -> tuple[str, str, str]:
@@ -77,6 +80,7 @@ def create_default_runtime() -> Runtime:
         raise NotADirectoryError(f"默认文档目录不存在: {document_root}")
 
     hook_engine = HookEngine()
+    LoggingHook().register(hook_engine)
     tool_engine = ToolEngine(hook_engine=hook_engine)
     tool_engine.register(ReadDocumentTool(document_root))
     tool_engine.register(WriteDocumentTool(document_root))
@@ -367,11 +371,47 @@ def main() -> int:
     """
     console = Console(highlight=False)
     try:
+        logging_settings = config.get("logging", {})
+        log_path = configure_logging(
+            logging_settings,
+            base_directory=_PROJECT_ROOT,
+        )
+    except Exception as error:  # noqa: BLE001 - 日志配置失败时 CLI 无法可靠启动。
+        print(f"Seshat 日志初始化失败：{error}", file=sys.stderr)
+        return 1
+
+    try:
         tenant_id, user_id, session_name = _get_default_identity()
         runtime = create_default_runtime()
     except Exception as error:  # noqa: BLE001 - CLI 边界需要展示所有启动错误。
+        log_event(
+            _LOGGER,
+            "application_start_error",
+            {
+                "error_type": type(error).__name__,
+                "error": str(error),
+            },
+            level=logging.ERROR,
+            error=error,
+        )
         print(f"Seshat 启动失败：{error}", file=sys.stderr)
         return 1
+
+    definitions = runtime.agent_loop.tool_engine.get_definitions()
+    log_event(
+        _LOGGER,
+        "application_started",
+        {
+            "model": runtime.agent_loop.model,
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "session_name": session_name,
+            "tools": [
+                definition.get("function", {}).get("name") for definition in definitions
+            ],
+            "log_path": log_path,
+        },
+    )
 
     _print_banner(console, tenant_id, user_id, session_name)
 
@@ -379,6 +419,11 @@ def main() -> int:
         try:
             user_input = _read_user_input(console)
         except (EOFError, KeyboardInterrupt):
+            log_event(
+                _LOGGER,
+                "application_stopped",
+                {"reason": "input_closed"},
+            )
             print("\n会话已结束。")
             return 0
 
@@ -386,10 +431,16 @@ def main() -> int:
             continue
         command = user_input.lower()
         if command in {"/exit", "/quit"}:
+            log_event(
+                _LOGGER,
+                "application_stopped",
+                {"reason": "user_exit"},
+            )
             print("会话已结束。")
             return 0
         if command == "/reset":
             runtime.agent_loop.reset()
+            log_event(_LOGGER, "conversation_reset", {})
             print("对话历史已清空。")
             continue
         if command == "/help":

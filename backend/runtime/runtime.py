@@ -92,6 +92,7 @@ class Runtime:
             "user_input": user_input,
             "request_options": copy.deepcopy(dict(request_options)),
         }
+        executed_payload = payload
         try:
             before_context = self._emit_hook(
                 HookEvent.BEFORE_RUNTIME,
@@ -99,6 +100,7 @@ class Runtime:
                 payload=payload,
                 metadata=metadata,
             )
+            executed_payload = before_context.payload
             hooked_user_input = before_context.payload.get("user_input")
             hooked_options = before_context.payload.get("request_options")
             if not isinstance(hooked_user_input, str):
@@ -124,7 +126,7 @@ class Runtime:
                 self._emit_hook(
                     HookEvent.RUNTIME_ERROR,
                     scope=scope,
-                    payload=payload,
+                    payload=executed_payload,
                     metadata=metadata,
                     error=error,
                 )

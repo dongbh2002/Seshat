@@ -24,6 +24,7 @@ class HookEvent(str, Enum):
     BEFORE_TOOL_EXECUTE = "before_tool_execute"  # 工具参数提交执行前。
     AFTER_TOOL_EXECUTE = "after_tool_execute"  # 工具成功执行后。
     TOOL_ERROR = "tool_error"  # 工具执行或工具 Hook 失败时。
+    TOOL_CALL_ERROR = "tool_call_error"  # 模型工具调用参数无法解析或下发时。
 
 
 @dataclass(frozen=True)

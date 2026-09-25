@@ -81,29 +81,35 @@ class ToolEngine:
             TimeoutError: 工具执行时间超过自身配置的超时时间。
             ValueError: 工具配置的超时时间不是正数。
         """
-        if name not in self._tools:
-            raise KeyError(f"未注册工具: {name}")
-
-        tool = self._tools[name]
-        if tool.timeout_seconds <= 0:
-            raise ValueError(f"工具超时时间必须为正数: {name}")
-
         scope = hook_scope or HookScope()
         metadata = dict(hook_metadata or {})
         payload = {
             "name": name,
             "arguments": copy.deepcopy(dict(arguments)),
-            "impact": tool.impact.value,
-            "timeout_seconds": tool.timeout_seconds,
         }
         executor: ThreadPoolExecutor | None = None
+        executed_payload = payload
         try:
+            if name not in self._tools:
+                raise KeyError(f"未注册工具: {name}")
+
+            tool = self._tools[name]
+            payload.update(
+                {
+                    "impact": tool.impact.value,
+                    "timeout_seconds": tool.timeout_seconds,
+                }
+            )
+            if tool.timeout_seconds <= 0:
+                raise ValueError(f"工具超时时间必须为正数: {name}")
+
             before_context = self._emit_hook(
                 HookEvent.BEFORE_TOOL_EXECUTE,
                 scope=scope,
                 payload=payload,
                 metadata=metadata,
             )
+            executed_payload = before_context.payload
             hooked_arguments = before_context.payload.get("arguments")
             if not isinstance(hooked_arguments, Mapping):
                 raise ValueError("before_tool_execute 必须保留对象类型的 arguments")
@@ -124,7 +130,7 @@ class ToolEngine:
             self._emit_hook(
                 HookEvent.AFTER_TOOL_EXECUTE,
                 scope=scope,
-                payload=before_context.payload,
+                payload=executed_payload,
                 metadata=metadata,
                 result=result,
             )
@@ -134,7 +140,7 @@ class ToolEngine:
                 self._emit_hook(
                     HookEvent.TOOL_ERROR,
                     scope=scope,
-                    payload=payload,
+                    payload=executed_payload,
                     metadata=metadata,
                     error=error,
                 )
