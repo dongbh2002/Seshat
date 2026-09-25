@@ -17,6 +17,12 @@ context:
     keep_recent_turns: 4
     summary_max_chars: 12000
 
+logging:
+  level: INFO
+  path: logs/seshat.log
+  max_bytes: 10485760
+  backup_count: 5
+
 current_model: KIMI-K26
 
 models:

@@ -2,12 +2,39 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
 import pytest
 
 from backend import cli
+
+
+@pytest.fixture(autouse=True)
+def _isolate_cli_log(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """将 CLI 测试日志写入 pytest 临时目录，避免污染真实运行日志。
+
+    Args:
+        monkeypatch: pytest 提供的运行时配置替换工具。
+        tmp_path: pytest 为当前测试创建的临时目录。
+
+    Returns:
+        None。
+    """
+    monkeypatch.setitem(
+        cli.config,
+        "logging",
+        {
+            "level": "INFO",
+            "path": str(tmp_path / "seshat.log"),
+            "max_bytes": 1_048_576,
+            "backup_count": 1,
+        },
+    )
 
 
 def test_create_default_runtime_keeps_multi_turn_messages_and_tools(
