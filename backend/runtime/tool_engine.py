@@ -20,17 +20,17 @@ from backend.tools.base import BaseTool
 class ToolEngine:
     """集中管理可供模型调用的工具及其本地实现。"""
 
-    def __init__(self, hook_engine: HookEngine | None = None) -> None:
-        """初始化空工具集合及可选的生命周期 Hook。
+    def __init__(self, hook_engine: HookEngine) -> None:
+        """初始化空工具集合和外部装配的生命周期 Hook。
 
         Args:
-            hook_engine: 工具执行前后和失败时使用的共享 HookEngine。
+            hook_engine: 由外部装配并负责工具生命周期事件的引擎。
 
         Returns:
             None。
         """
         self._tools: dict[str, BaseTool] = {}  # 工具名称到完整工具对象的映射。
-        self.hook_engine = hook_engine  # 可选的共享生命周期 Hook 执行入口。
+        self.hook_engine = hook_engine  # 外部装配的工具生命周期 Hook 入口。
 
     def register(self, tool: BaseTool) -> None:
         """注册一个实现统一接口的工具对象。
@@ -183,6 +183,5 @@ class ToolEngine:
             result=result,
             error=error,
         )
-        if self.hook_engine is not None:
-            self.hook_engine.emit(context)
+        self.hook_engine.emit(context)
         return context

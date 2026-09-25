@@ -28,22 +28,22 @@ class AgentLoop:
         self,
         client: OpenAI,
         model: str,
-        tool_engine: ToolEngine | None = None,
-        context_engine: ContextEngine | None = None,
+        tool_engine: ToolEngine,
+        context_engine: ContextEngine,
+        hook_engine: HookEngine,
         max_steps: int | None = None,
         default_request_options: dict[str, Any] | None = None,
-        hook_engine: HookEngine | None = None,
     ) -> None:
         """初始化 Agent 循环。
 
         Args:
             client: OpenAI 兼容模型客户端。
             model: 每轮请求使用的实际模型名称。
-            tool_engine: 可选的工具引擎；省略时创建空工具引擎。
-            context_engine: 可选的上下文引擎；省略时创建默认引擎。
+            tool_engine: 由外部装配并负责工具定义和执行的引擎。
+            context_engine: 由外部装配并负责模型上下文的引擎。
+            hook_engine: 由外部装配并负责模型生命周期事件的引擎。
             max_steps: 可选的最大模型调用轮数；省略时读取 YAML 配置。
             default_request_options: 每次模型调用默认使用的请求参数。
-            hook_engine: 模型请求前后和失败时使用的共享 HookEngine。
 
         Returns:
             None。
@@ -54,8 +54,9 @@ class AgentLoop:
         """
         self.client = client  # 模型客户端，由 providers 创建。
         self.model = model  # 当前 Agent 使用的实际模型名称。
-        self.tool_engine = tool_engine or ToolEngine()  # 工具定义与执行入口。
-        self.context_engine = context_engine or ContextEngine()  # 模型上下文组装入口。
+        self.tool_engine = tool_engine  # 外部装配的工具定义与执行入口。
+        self.context_engine = context_engine  # 外部装配的模型上下文组装入口。
+        self.hook_engine = hook_engine  # 外部装配的模型生命周期 Hook 入口。
         agent_loop_config = config.get("agent_loop")
         if not isinstance(agent_loop_config, Mapping):
             raise TypeError("配置中的 agent_loop 必须是对象")
@@ -69,11 +70,6 @@ class AgentLoop:
         if resolved_max_steps <= 0:
             raise ValueError("max_steps 必须大于 0")
         self.max_steps = resolved_max_steps  # 单次用户输入的最大模型调用轮数。
-        self.hook_engine = hook_engine or (  # 与工具引擎共享的生命周期 Hook。
-            self.tool_engine.hook_engine
-        )
-        if self.hook_engine is not None:
-            self.tool_engine.hook_engine = self.hook_engine
         model_config = config["models"][config["current_model"]]
         configured_parameters = model_config.get("parameters", {})
         self.default_request_options = dict(
@@ -341,6 +337,5 @@ class AgentLoop:
             result=result,
             error=error,
         )
-        if self.hook_engine is not None:
-            self.hook_engine.emit(context)
+        self.hook_engine.emit(context)
         return context
