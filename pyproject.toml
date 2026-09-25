@@ -11,6 +11,7 @@ dependencies = [
     "lxml>=6.0,<7.0",
     "PyYAML>=6.0,<7.0",
     "rich>=13.9,<15.0",
+    "jinja2>=3.1,<4.0",
 ]
 
 [dependency-groups]
