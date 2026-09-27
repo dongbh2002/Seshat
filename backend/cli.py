@@ -1,7 +1,8 @@
-"""Seshat 终端多轮对话入口，只负责终端交互与会话命令；组件装配见 backend/bootstrap/。"""
+"""Seshat 终端多轮对话入口，只负责启动参数、终端交互与会话命令；组件装配见 backend/bootstrap/。"""
 
 from __future__ import annotations
 
+import argparse
 import logging
 import sys
 from datetime import datetime
@@ -17,6 +18,7 @@ from backend.bootstrap import (
     PROJECT_ROOT,
     create_default_runtime,
     create_session_manager,
+    resolve_identity,
 )
 from backend.config import load_settings
 from backend.logging import configure_logging, log_event
@@ -139,8 +141,8 @@ def _print_banner(
     Args:
         console: 用于渲染终端样式的 Rich Console。
         model_name: 当前启用的模型配置名称。
-        tenant_id: 当前默认租户标识。
-        user_id: 当前默认用户标识。
+        tenant_id: 当前租户标识。
+        user_id: 当前用户标识。
         session_id: 启动时新开的会话 ID。
 
     Returns:
@@ -163,7 +165,7 @@ def _print_banner(
     status = Text()
     status.append("  ", style="on #1688f8")
     status.append("  READY", style="bold #58a6ff")
-    status.append("  default workspace loaded", style="dim")
+    status.append("  workspace loaded", style="dim")
     status.justify = "center"
 
     identity = Table.grid(padding=(0, 0))
@@ -354,12 +356,35 @@ def _print_assistant_message(console: Console, reply: str) -> None:
     console.print(Text(f"* done {completed_at}", style="dim"))
 
 
-def main() -> int:
-    """启动默认 Runtime，并持续处理终端中的多轮用户输入。
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    """解析启动参数。
+
+    Args:
+        argv: 不含程序名的参数列表；None 时读取 sys.argv。
 
     Returns:
-        正常退出时返回 0，Runtime 初始化失败时返回 1。
+        含 tenant 与 user（未提供为 None）的参数对象。
     """
+    # TODO: 接入注册登录后，身份改由登录结果提供。
+    parser = argparse.ArgumentParser(
+        prog="python -m backend.cli",
+        description="Seshat 终端对话。租户与用户须同时提供；都不提供时以游客身份启动。",
+    )
+    parser.add_argument("--tenant", help="租户名，通常对应课题组")
+    parser.add_argument("--user", help="用户名")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """按启动参数解析身份并启动 Runtime，持续处理终端中的多轮用户输入。
+
+    Args:
+        argv: 不含程序名的启动参数；None 时读取 sys.argv。
+
+    Returns:
+        正常退出时返回 0，身份或 Runtime 初始化失败时返回 1。
+    """
+    args = _parse_args(argv)
     console = Console(highlight=False)
     try:
         settings = load_settings()
@@ -372,9 +397,9 @@ def main() -> int:
         return 1
 
     try:
-        identity = settings.default_identity
-        runtime = create_default_runtime(settings)
-        sessions = create_session_manager(settings, runtime)
+        identity = resolve_identity(settings, args.tenant, args.user)
+        runtime = create_default_runtime(settings, identity)
+        sessions = create_session_manager(settings, identity, runtime)
     except Exception as error:  # noqa: BLE001 - CLI 边界需要展示所有启动错误。
         log_event(
             _LOGGER,

@@ -34,11 +34,12 @@ Seshat/
 │
 └── backend/
     ├── __init__.py                   包标记
-    ├── cli.py                        终端入口：只负责终端交互（横幅、输入、/new /sessions /resume 等命令），启动时新开会话
+    ├── cli.py                        终端入口：启动参数 --tenant/--user（都不传为游客）、终端交互（横幅、输入、/new /sessions /resume 等命令），启动时新开会话
     │
-    ├── bootstrap/                    装配：按配置创建并组装各组件，供 CLI 等入口使用
+    ├── bootstrap/                    装配：解析启动身份，按配置创建并组装各组件，供 CLI 等入口使用
+    │   ├── identity.py               Identity、resolve_identity：启动参数解析为租户/用户身份，都不传时生成带时间码的游客用户；校验名字并统一小写
     │   ├── paths.py                  PROJECT_ROOT、TENANT_PACKS_ROOT 等路径常量；resolve_project_path：配置路径按项目根目录解析
-    │   ├── runtime_factory.py        create_default_runtime：解析默认文档目录与模型客户端；create_runtime：用给定目录与客户端创建共享组件、注册工具与 Hook（评估复用）；create_session_manager：为 Runtime 装配会话管理器（评估不调用）
+    │   ├── runtime_factory.py        create_default_runtime：按身份准备文档目录（不存在则创建）与模型客户端；create_runtime：用给定身份、目录与客户端创建共享组件、注册工具与 Hook（评估复用）；create_session_manager：按身份为 Runtime 装配会话管理器（评估不调用）
     │   └── __init__.py               导出装配函数与路径常量
     │
     ├── eval/                         离线评估，不参与运行时
@@ -53,7 +54,7 @@ Seshat/
     │       └── results/              运行生成：report.md（表格与指标定义）、results.json（逐步明细）
     │
     ├── config/
-    │   ├── application_local.yaml    唯一配置来源：租户、会话文件目录、模型（含窗口大小）、token 预算与压缩比例、审阅状态上限、文档参数、日志
+    │   ├── application_local.yaml    唯一配置来源：游客身份、会话文件目录、模型（含窗口大小）、token 预算与压缩比例、审阅状态上限、文档参数、日志
     │   ├── settings.py               类型化 Settings dataclass 与字段校验
     │   ├── config.py                 读取 YAML 并构造 Settings
     │   └── __init__.py               导出配置类和加载函数
@@ -88,6 +89,7 @@ Seshat/
     │
     ├── utils/                        按格式划分的底层能力，不含业务流程
     │   ├── __init__.py               包标记
+    │   ├── time_id.py                时间码 ID（YYYYMMDD-HHMMSS-6位十六进制）：会话 ID 与游客用户名共用
     │   └── docx/
     │       ├── parser.py             DocxParser：OOXML 解析为内容块（读、写、索引共用）；判断块 ID 是否按位置生成
     │       ├── models.py             DocumentBlock：内容块模型，Markdown 与索引转换
@@ -138,7 +140,7 @@ Seshat/
     │   ├── review_sections/tool.py   工具 review_sections：按章节 map-reduce 审阅
     │   └── */__init__.py             导出对应工具类
     │
-    ├── data_agent/tenant_packs/<tenant_id>/<user_id>/   用户文档工作目录，工具只能访问这里
+    ├── data_agent/tenant_packs/<tenant_id>/<user_id>/   用户文档工作目录，工具只能访问这里；启动时不存在则创建
     ├── data_agent/sessions/<tenant_id>/<user_id>/       会话文件 <session_id>.json，运行时生成（不提交）
     └── skills/                       预留空目录，未被代码引用
 ```

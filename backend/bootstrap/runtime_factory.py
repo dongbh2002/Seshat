@@ -1,4 +1,4 @@
-"""默认 Runtime 装配：按配置创建共享组件、注册工具与 Hook，返回可运行的 Runtime；并为其装配会话管理器。"""
+"""Runtime 装配：按配置与启动身份创建共享组件、注册工具与 Hook，返回可运行的 Runtime；并为其装配会话管理器。"""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from pathlib import Path
 
 from openai import OpenAI
 
+from backend.bootstrap.identity import Identity
 from backend.bootstrap.paths import TENANT_PACKS_ROOT, resolve_project_path
 from backend.config import Settings
 from backend.hooks import HookEngine, HookScope
@@ -38,27 +39,29 @@ from backend.tools import (
 from backend.utils.docx import DocumentIndex
 
 
-def create_default_runtime(settings: Settings) -> Runtime:
-    """按默认配置创建注册好文档工具、章节子任务和 Hook 的 Runtime。
+def create_default_runtime(settings: Settings, identity: Identity) -> Runtime:
+    """为启动身份创建注册好文档工具、章节子任务和 Hook 的 Runtime。
+
+    身份对应的文档工作目录不存在时直接创建。
 
     Args:
         settings: 入口加载一次并注入各组件的类型化项目配置。
+        identity: 启动身份，决定文档工作目录与运行范围。
 
     Returns:
         可持续调用 ``run`` 进行进程内多轮对话的 Runtime。
 
     Raises:
-        NotADirectoryError: 默认租户用户目录不存在。
+        OSError: 文档工作目录创建失败。
         KeyError: 模型环境变量缺失。
     """
-    identity = settings.default_identity
     document_root = TENANT_PACKS_ROOT / identity.tenant_id / identity.user_id
-    if not document_root.is_dir():
-        raise NotADirectoryError(f"默认文档目录不存在: {document_root}")
+    document_root.mkdir(parents=True, exist_ok=True)
 
     client, model = create_model_client(settings=settings)
     return create_runtime(
         settings,
+        identity=identity,
         document_root=document_root,
         client=client,
         model=model,
@@ -68,14 +71,16 @@ def create_default_runtime(settings: Settings) -> Runtime:
 def create_runtime(
     settings: Settings,
     *,
+    identity: Identity,
     document_root: Path,
     client: OpenAI,
     model: str,
 ) -> Runtime:
-    """用给定的文档目录和模型客户端装配 Runtime，供默认入口与评估脚本复用。
+    """用给定的身份、文档目录和模型客户端装配 Runtime，供默认入口与评估脚本复用。
 
     Args:
         settings: 类型化项目配置。
+        identity: 运行身份，写入 Hook 运行范围。
         document_root: 工具允许访问的文档目录。
         client: OpenAI 兼容模型客户端。
         model: 实际模型名称。
@@ -83,7 +88,6 @@ def create_runtime(
     Returns:
         注册好文档工具、章节子任务和 Hook 的 Runtime。
     """
-    identity = settings.default_identity
     request_options = settings.active_model.parameters
     documents = settings.documents
     renderer = PromptRenderer(PROMPT_DIRECTORY)
@@ -158,19 +162,23 @@ def create_runtime(
     )
 
 
-def create_session_manager(settings: Settings, runtime: Runtime) -> SessionManager:
+def create_session_manager(
+    settings: Settings,
+    identity: Identity,
+    runtime: Runtime,
+) -> SessionManager:
     """为 Runtime 装配会话管理器：新开会话，并注册每轮结束后的自动保存。
 
     评估等不需要落盘的入口只调用 create_runtime，不调用本函数。
 
     Args:
-        settings: 类型化项目配置，提供会话根目录与默认身份。
+        settings: 类型化项目配置，提供会话根目录。
+        identity: 启动身份，决定会话文件所在目录。
         runtime: 刚创建、尚无会话状态的 Runtime。
 
     Returns:
         已绑定当前会话的会话管理器。
     """
-    identity = settings.default_identity
     directory = (
         resolve_project_path(settings.sessions.root)
         / identity.tenant_id

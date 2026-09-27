@@ -19,7 +19,7 @@ from typing import Any
 
 import yaml
 
-from backend.bootstrap import PROJECT_ROOT, create_runtime
+from backend.bootstrap import PROJECT_ROOT, create_runtime, resolve_identity
 from backend.config import load_config
 from backend.config.settings import parse_settings
 from backend.eval.compress.baselines import (
@@ -320,6 +320,7 @@ def run_once(
         )
         runtime = create_runtime(
             settings,
+            identity=resolve_identity(settings, None, None),
             document_root=root,
             client=client,  # type: ignore[arg-type]
             model="scripted",

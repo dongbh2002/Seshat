@@ -1,9 +1,9 @@
 # 本文件保存项目运行变量及模型环境变量映射，后续配置可直接扩展。
-default_tenant: "233"
 
-tenants:
-  "233":
-    default_user: dbh
+# 启动时未传 --tenant/--user 则以游客身份运行：租户为 guest_tenant，用户为 guest_user_prefix-<时间码>。
+identity:
+  guest_tenant: guest
+  guest_user_prefix: guest
 
 sessions:
   root: backend/data_agent/sessions
