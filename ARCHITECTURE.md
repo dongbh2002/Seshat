@@ -33,7 +33,7 @@ Seshat/
 │   └── 06-上下文压缩机制.md          上下文压缩
 │
 ├── tests/
-│   ├── fixtures/PE.docx              测试与评估共用的示例论文
+│   ├── samples/PE.docx               测试用示例论文（IEEE 模板原始版本，测试中只修改临时副本）
 │   ├── test_cli.py                   默认装配与 CLI 多轮命令
 │   ├── test_llm.py                   真实模型连通性
 │   ├── test_read_document.py         打印并校验 DOCX 读取结果
@@ -54,6 +54,7 @@ Seshat/
     │   ├── __init__.py               包说明
     │   └── compress/                 上下文压缩评估：脚本化模型在真实 Runtime 上跑固定剧本，对比多种策略
     │       ├── eval_config.yaml      评估参数：文档、预算、行为、参评策略（kind + 配置覆盖，用于消融）、输出目录
+    │       ├── pe.docx               评估文档，与 results/ 中已有报告对应，保持不变以便复现
     │       ├── run_eval.py           入口：预算 × 行为 × 策略逐一运行，测量每次请求，写出报告
     │       ├── scripted_agent.py     脚本化模型：10 轮剧本（通读→约束→问章→编辑→…→回顾），只按上下文可见内容决定是否重读；SDK 同款响应
     │       ├── metrics.py            指标：块可见性、过时/重复正文、前缀复用与估计未缓存 token、需求命中与汇总
