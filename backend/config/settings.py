@@ -10,18 +10,11 @@ _ALLOWED_LOG_LEVELS = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"}
 
 
 @dataclass(frozen=True)
-class TenantSettings:
-    """单个租户的默认用户配置。"""
-
-    default_user: str  # 租户下默认使用的用户标识。
-
-
-@dataclass(frozen=True)
 class IdentitySettings:
-    """已经解析完成的默认租户和用户身份。"""
+    """启动时未指定租户与用户时使用的游客身份配置。"""
 
-    tenant_id: str  # 默认租户标识。
-    user_id: str  # 默认用户标识。
+    guest_tenant: str  # 游客租户标识。
+    guest_user_prefix: str  # 游客用户名前缀，每次启动在其后追加时间码。
 
 
 @dataclass(frozen=True)
@@ -116,8 +109,7 @@ class ModelSettings:
 class Settings:
     """Seshat 启动后由各组件共享的类型化项目配置。"""
 
-    default_tenant: str  # 默认租户标识。
-    tenants: dict[str, TenantSettings]  # 以租户标识索引的租户配置。
+    identity: IdentitySettings  # 游客身份配置。
     sessions: SessionSettings  # 会话持久化配置。
     agent_loop: AgentLoopSettings  # Agent 循环配置。
     context: ContextSettings  # 上下文组装与压缩配置。
@@ -125,19 +117,6 @@ class Settings:
     logging: LoggingSettings  # 本地文件日志配置。
     current_model: str  # 当前启用的模型配置名称。
     models: dict[str, ModelSettings]  # 以配置名称索引的模型配置。
-
-    @property
-    def default_identity(self) -> IdentitySettings:
-        """返回默认租户对应的用户身份。
-
-        Returns:
-            已解析完成的默认身份配置。
-        """
-        tenant = self.tenants[self.default_tenant]
-        return IdentitySettings(
-            tenant_id=self.default_tenant,
-            user_id=tenant.default_user,
-        )
 
     @property
     def active_model(self) -> ModelSettings:
@@ -162,14 +141,17 @@ def parse_settings(data: Mapping[str, Any]) -> Settings:
         TypeError: 配置节点或字段类型无效。
         ValueError: 必填字段为空、数值越界或引用不存在。
     """
-    default_tenant = _require_string(data.get("default_tenant"), "default_tenant")
-    tenants_data = _require_mapping(data.get("tenants"), "tenants")
-    tenants = {
-        str(tenant_id): _parse_tenant_settings(str(tenant_id), tenant_data)
-        for tenant_id, tenant_data in tenants_data.items()
-    }
-    if default_tenant not in tenants:
-        raise ValueError(f"default_tenant 未在 tenants 中定义: {default_tenant}")
+    identity_data = _require_mapping(data.get("identity"), "identity")
+    identity = IdentitySettings(
+        guest_tenant=_require_string(
+            identity_data.get("guest_tenant"),
+            "identity.guest_tenant",
+        ),
+        guest_user_prefix=_require_string(
+            identity_data.get("guest_user_prefix"),
+            "identity.guest_user_prefix",
+        ),
+    )
 
     sessions_data = _require_mapping(data.get("sessions"), "sessions")
     sessions = SessionSettings(
@@ -337,8 +319,7 @@ def parse_settings(data: Mapping[str, Any]) -> Settings:
         )
 
     return Settings(
-        default_tenant=default_tenant,
-        tenants=tenants,
+        identity=identity,
         sessions=sessions,
         agent_loop=agent_loop,
         context=ContextSettings(
@@ -350,25 +331,6 @@ def parse_settings(data: Mapping[str, Any]) -> Settings:
         logging=logging_settings,
         current_model=current_model,
         models=models,
-    )
-
-
-def _parse_tenant_settings(tenant_id: str, value: Any) -> TenantSettings:
-    """解析单个租户配置。
-
-    Args:
-        tenant_id: 当前租户标识，用于生成精确错误信息。
-        value: YAML 中的租户配置节点。
-
-    Returns:
-        类型化租户配置。
-    """
-    tenant = _require_mapping(value, f"tenants.{tenant_id}")
-    return TenantSettings(
-        default_user=_require_string(
-            tenant.get("default_user"),
-            f"tenants.{tenant_id}.default_user",
-        ),
     )
 
 

@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from backend import cli
-from backend.bootstrap import runtime_factory
+from backend.bootstrap import Identity, runtime_factory
 
 
 @pytest.fixture(autouse=True)
@@ -66,7 +66,10 @@ def test_create_default_runtime_keeps_multi_turn_messages_and_tools(
         MagicMock(return_value=(fake_client, "fake-model")),
     )
 
-    runtime = runtime_factory.create_default_runtime(cli.load_settings())
+    runtime = runtime_factory.create_default_runtime(
+        cli.load_settings(),
+        Identity(tenant_id="233", user_id="dbh"),
+    )
     first_reply = runtime.run("第一轮问题")
     second_reply = runtime.run("第二轮问题")
 
@@ -134,7 +137,7 @@ def test_cli_main_handles_multi_turn_commands(
         "builtins.input",
         side_effect=["第一轮问题", "/new", "第二轮问题", "/help", "/exit"],
     ):
-        exit_code = cli.main()
+        exit_code = cli.main([])
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -166,7 +169,7 @@ def test_cli_main_reports_startup_failure(
         MagicMock(side_effect=RuntimeError("模拟启动失败")),
     )
 
-    exit_code = cli.main()
+    exit_code = cli.main([])
 
     captured = capsys.readouterr()
     assert exit_code == 1

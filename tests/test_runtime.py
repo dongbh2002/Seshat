@@ -1,6 +1,6 @@
 """Runtime 集成测试，验证默认装配下不触发工具调用的真实多轮模型交互。"""
 
-from backend.bootstrap import create_default_runtime
+from backend.bootstrap import Identity, create_default_runtime
 from backend.config import load_settings
 
 
@@ -10,7 +10,10 @@ def test_runtime_multi_turn_chat_without_tools() -> None:
     Returns:
         None；模型未返回有效结果或未保留上下文时由断言报告失败。
     """
-    runtime = create_default_runtime(load_settings())
+    runtime = create_default_runtime(
+        load_settings(),
+        Identity(tenant_id="233", user_id="dbh"),
+    )
 
     first_reply = runtime.run("请记住数字 233，并只回复“已记住”。")
     second_reply = runtime.run("我刚才让你记住的数字是什么？只回复数字。")

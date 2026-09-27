@@ -13,7 +13,6 @@ from backend.config.settings import (
     ReviewStateSettings,
     SessionSettings,
     Settings,
-    TenantSettings,
 )
 
 __all__ = [
@@ -28,7 +27,6 @@ __all__ = [
     "ReviewStateSettings",
     "SessionSettings",
     "Settings",
-    "TenantSettings",
     "load_config",
     "load_settings",
 ]

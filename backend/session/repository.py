@@ -5,26 +5,23 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+
+from backend.utils.time_id import TIME_ID_PATTERN, new_time_id
 
 _LOGGER = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 2  # 会话文件格式版本，结构不兼容变化时递增，旧版本文件拒绝加载。
-_SESSION_ID_PATTERN = re.compile(  # 会话 ID 格式，同时防止外部输入的 ID 造成路径穿越。
-    r"^\d{8}-\d{6}-[0-9a-f]{6}$"
-)
 
 
 @dataclass
 class SessionRecord:
     """一个会话的元信息与完整会话状态，对应一个会话文件。"""
 
-    id: str  # 会话 ID：创建时间 YYYYMMDD-HHMMSS 加 6 位随机十六进制。
+    id: str  # 会话 ID，时间码格式，见 backend/utils/time_id.py。
     title: str  # 会话标题，取首条用户输入压成的单行；尚无输入时为空字符串。
     created_at: str  # 创建时间，带时区的 ISO 8601。
     updated_at: str  # 最后保存时间，带时区的 ISO 8601。
@@ -55,7 +52,7 @@ class SessionRepository:
         now = datetime.now().astimezone()
         timestamp = now.isoformat(timespec="seconds")
         return SessionRecord(
-            id=f"{now:%Y%m%d-%H%M%S}-{uuid4().hex[:6]}",
+            id=new_time_id(now),
             title="",
             created_at=timestamp,
             updated_at=timestamp,
@@ -136,7 +133,8 @@ class SessionRepository:
         Raises:
             ValueError: 会话 ID 格式无效。
         """
-        if not _SESSION_ID_PATTERN.match(session_id):
+        # 时间码格式同时防止外部输入的 ID 造成路径穿越。
+        if not TIME_ID_PATTERN.fullmatch(session_id):
             raise ValueError(f"会话 ID 格式无效: {session_id}")
         return self.directory / f"{session_id}.json"
 
