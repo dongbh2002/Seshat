@@ -6,7 +6,7 @@ from pathlib import Path
 from backend.tools import ReadDocumentTool
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-_DOCUMENT_ROOT = _PROJECT_ROOT / "tests" / "fixtures"
+_DOCUMENT_ROOT = _PROJECT_ROOT / "tests" / "samples"
 
 
 def test_read_document_tool_with_sample_docx() -> None:
