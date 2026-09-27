@@ -99,14 +99,13 @@ def test_create_default_runtime_keeps_multi_turn_messages_and_tools(
     ]
     assert runtime.hook_scope.tenant_id == "233"
     assert runtime.hook_scope.user_id == "dbh"
-    assert runtime.hook_scope.session_name == "pe"
 
 
 def test_cli_main_handles_multi_turn_commands(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """验证终端循环处理多轮输入、重置、帮助和退出命令。
+    """验证终端循环处理多轮输入、新开会话、帮助和退出命令。
 
     Args:
         monkeypatch: pytest 提供的运行时替换工具。
@@ -122,20 +121,28 @@ def test_cli_main_handles_multi_turn_commands(
         "create_default_runtime",
         MagicMock(return_value=fake_runtime),
     )
+    fake_sessions = MagicMock()
+    fake_sessions.current.id = "20260927-213000-a1b2c3"
+    fake_sessions.start_new.return_value = SimpleNamespace(id="20260927-213500-d4e5f6")
+    monkeypatch.setattr(
+        cli,
+        "create_session_manager",
+        MagicMock(return_value=fake_sessions),
+    )
 
     with patch(
         "builtins.input",
-        side_effect=["第一轮问题", "/reset", "第二轮问题", "/help", "/exit"],
+        side_effect=["第一轮问题", "/new", "第二轮问题", "/help", "/exit"],
     ):
         exit_code = cli.main()
 
     captured = capsys.readouterr()
     assert exit_code == 0
     assert fake_runtime.run.call_args_list == [call("第一轮问题"), call("第二轮问题")]
-    fake_runtime.agent_loop.reset.assert_called_once_with()
+    fake_sessions.start_new.assert_called_once_with()
     assert "第一轮回复" in captured.out
     assert "第二轮回复" in captured.out
-    assert "对话历史已清空" in captured.out
+    assert "已新开会话 20260927-213500-d4e5f6" in captured.out
     assert "可用命令" in captured.out
     assert "会话已结束" in captured.out
 

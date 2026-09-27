@@ -33,7 +33,7 @@ class HookScope:
 
     tenant_id: str | None = None  # 当前租户标识。
     user_id: str | None = None  # 当前用户标识。
-    session_name: str | None = None  # 当前会话名称。
+    session_id: str | None = None  # 当前会话 ID，由会话管理器绑定。
     run_id: str | None = None  # 当前 Runtime.run 调用的唯一标识。
 
     def with_run_id(self, run_id: str) -> HookScope:

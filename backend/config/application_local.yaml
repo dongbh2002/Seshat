@@ -4,7 +4,9 @@ default_tenant: "233"
 tenants:
   "233":
     default_user: dbh
-    session_name: pe
+
+sessions:
+  root: backend/data_agent/sessions
 
 agent_loop:
   max_steps: 12
