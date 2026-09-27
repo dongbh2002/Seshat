@@ -17,15 +17,15 @@ def test_read_document_tool_with_sample_docx() -> None:
     Returns:
         None；读取失败或返回结构不完整时由断言报告失败。
     """
-    tool = ReadDocumentTool(_DOCUMENT_ROOT)
+    tool = ReadDocumentTool(
+        _DOCUMENT_ROOT, default_max_chars=20_000, max_chars_limit=100_000
+    )
     result = tool.execute(path="PE.docx", max_chars=100000)
 
     print("\n=== 文档元数据 ===")
     print(json.dumps(result["metadata"], ensure_ascii=False, indent=2))
     print("\n=== 本次结构索引 ===")
     print(json.dumps(result["index"], ensure_ascii=False, indent=2))
-    print("\n=== 批注 ===")
-    print(json.dumps(result["comments"], ensure_ascii=False, indent=2))
     print("\n=== 页眉页脚及脚注尾注 ===")
     print(json.dumps(result["extras"], ensure_ascii=False, indent=2))
     print("\n=== 读取警告 ===")

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+import re
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
@@ -11,10 +13,10 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from lxml import etree  # pyright: ignore[reportAttributeAccessIssue]
 
-from backend.tools.read_document.parser import (
-    _NAMESPACES,
-    _DocxParser,
-    _qualified_name,
+from backend.utils.docx.parser import (
+    NAMESPACES,
+    DocxParser,
+    qualified_name,
 )
 
 if TYPE_CHECKING:
@@ -34,6 +36,11 @@ _COMMENTS_PART = "word/comments.xml"
 _DOCUMENT_PART = "word/document.xml"
 _DOCUMENT_RELATIONSHIPS_PART = "word/_rels/document.xml.rels"
 _CONTENT_TYPES_PART = "[Content_Types].xml"
+_MARKUP_COMPATIBILITY_NAMESPACE = (
+    "http://schemas.openxmlformats.org/markup-compatibility/2006"
+)
+_PARA_ID_PATTERN = re.compile(rb'paraId="([0-9A-Fa-f]{8})"')  # 各部件中已有的 paraId。
+_MAX_PARA_ID = 0x7FFFFFFF  # Word 要求 paraId / textId 小于 0x80000000。
 
 
 class DocumentEditError(ValueError):
@@ -69,8 +76,8 @@ class DocxEditor:
         )
         self.archive = ZipFile(source_path)  # 修改期间保持打开的源 DOCX ZIP 包。
         try:
-            self.parser = _DocxParser(self.archive)  # 与读取工具共用的 ID 解析器。
-            body = self.parser.document.find("w:body", _NAMESPACES)
+            self.parser = DocxParser(self.archive)  # 与读取工具共用的 ID 解析器。
+            body = self.parser.document.find("w:body", NAMESPACES)
             if body is None:
                 raise DocumentEditError("DOCX 正文缺少 body 节点")
             blocks = self.parser.parse_blocks("accepted")
@@ -169,6 +176,32 @@ class DocxEditor:
                 }
             )
         return results
+
+    def assign_missing_para_ids(self) -> int:
+        """为正文中缺少 w14:paraId 的段落（含新插入段落）分配唯一 paraId 和 textId。
+
+        块 ID 优先由 paraId 生成，补齐后块 ID 不再随段落位置变化。新值避开包内
+        所有 XML 部件已用的 paraId；根节点未声明 w14 命名空间时先补充声明。
+
+        Returns:
+            本次补齐的段落数量。
+        """
+        paragraphs = [
+            paragraph
+            for paragraph in self.document.iter(qualified_name("w:p"))
+            if paragraph.get(qualified_name("w14:paraId")) is None
+        ]
+        if not paragraphs:
+            return 0
+        self._ensure_w14_declared()
+        used_ids = self._collect_used_para_ids()
+        for paragraph in paragraphs:
+            paragraph_id = self._new_hex_id(used_ids)
+            used_ids.add(paragraph_id)
+            paragraph.set(qualified_name("w14:paraId"), paragraph_id)
+            if paragraph.get(qualified_name("w14:textId")) is None:
+                paragraph.set(qualified_name("w14:textId"), self._new_hex_id(set()))
+        return len(paragraphs)
 
     def save(self, output_path: Path) -> None:
         """保存 DOCX，仅序列化正文和本批修改涉及的附加部件。
@@ -380,20 +413,20 @@ class DocxEditor:
             DocumentEditError: 操作不支持目标类型或已有修订嵌套风险。
         """
         paragraph_operations = {"replace_text", "comment"}
-        if operation_name in paragraph_operations and target.tag != _qualified_name(
+        if operation_name in paragraph_operations and target.tag != qualified_name(
             "w:p"
         ):
             raise DocumentEditError(
                 f"operations[{index}] 的 {operation_name} 只能用于段落 ID"
             )
-        if operation_name == "set_cell" and target.tag != _qualified_name("w:tbl"):
+        if operation_name == "set_cell" and target.tag != qualified_name("w:tbl"):
             raise DocumentEditError(f"operations[{index}] 的 set_cell 只能用于表格 ID")
 
         revision_sensitive = {"replace_text", "delete", "set_cell"}
         if self.tracked and operation_name in revision_sensitive:
             has_existing_revision = (
-                target.find(".//w:ins", _NAMESPACES) is not None
-                or target.find(".//w:del", _NAMESPACES) is not None
+                target.find(".//w:ins", NAMESPACES) is not None
+                or target.find(".//w:del", NAMESPACES) is not None
             )
             if has_existing_revision:
                 raise DocumentEditError(
@@ -475,7 +508,7 @@ class DocxEditor:
             if not isolated_runs:
                 raise DocumentEditError("无法定位纯插入位置，请重新读取文档后重试")
             anchor = isolated_runs[0]
-            run_properties = anchor.find("w:rPr", _NAMESPACES)
+            run_properties = anchor.find("w:rPr", NAMESPACES)
             new_run = self._new_run(replacement_text, run_properties)
             node = self._wrap_insertion(new_run) if self.tracked else new_run
             if change_start == 0:
@@ -487,7 +520,7 @@ class DocxEditor:
         isolated_runs = self._isolate(paragraph, change_start, change_end)
         if not isolated_runs:
             raise DocumentEditError("无法定位需要替换的文本 run，请重新读取文档后重试")
-        run_properties = isolated_runs[0].find("w:rPr", _NAMESPACES)
+        run_properties = isolated_runs[0].find("w:rPr", NAMESPACES)
         if self.tracked:
             last_deletion = None
             for run in isolated_runs:
@@ -528,38 +561,38 @@ class DocxEditor:
         Returns:
             可返回给模型的操作结果。
         """
-        new_paragraph = etree.Element(_qualified_name("w:p"))
+        new_paragraph = etree.Element(qualified_name("w:p"))
         run_properties = None
-        if reference.tag == _qualified_name("w:p"):
-            paragraph_properties = reference.find("w:pPr", _NAMESPACES)
+        if reference.tag == qualified_name("w:p"):
+            paragraph_properties = reference.find("w:pPr", NAMESPACES)
             if paragraph_properties is not None:
                 copied_properties = copy.deepcopy(paragraph_properties)
-                section_properties = copied_properties.find("w:sectPr", _NAMESPACES)
+                section_properties = copied_properties.find("w:sectPr", NAMESPACES)
                 if section_properties is not None:
                     copied_properties.remove(section_properties)
-                marker_properties = copied_properties.find("w:rPr", _NAMESPACES)
+                marker_properties = copied_properties.find("w:rPr", NAMESPACES)
                 if marker_properties is not None:
                     for revision_name in ("w:ins", "w:del"):
                         for revision in marker_properties.findall(
                             revision_name,
-                            _NAMESPACES,
+                            NAMESPACES,
                         ):
                             marker_properties.remove(revision)
                 new_paragraph.append(copied_properties)
-            first_run = next(reference.iter(_qualified_name("w:r")), None)
+            first_run = next(reference.iter(qualified_name("w:r")), None)
             if first_run is not None:
-                run_properties = first_run.find("w:rPr", _NAMESPACES)
+                run_properties = first_run.find("w:rPr", NAMESPACES)
 
         if style is not None:
-            paragraph_properties = new_paragraph.find("w:pPr", _NAMESPACES)
+            paragraph_properties = new_paragraph.find("w:pPr", NAMESPACES)
             if paragraph_properties is None:
-                paragraph_properties = etree.Element(_qualified_name("w:pPr"))
+                paragraph_properties = etree.Element(qualified_name("w:pPr"))
                 new_paragraph.insert(0, paragraph_properties)
-            style_element = paragraph_properties.find("w:pStyle", _NAMESPACES)
+            style_element = paragraph_properties.find("w:pStyle", NAMESPACES)
             if style_element is None:
-                style_element = etree.Element(_qualified_name("w:pStyle"))
+                style_element = etree.Element(qualified_name("w:pStyle"))
                 paragraph_properties.insert(0, style_element)
-            style_element.set(_qualified_name("w:val"), style)
+            style_element.set(qualified_name("w:val"), style)
 
         new_run = self._new_run(text, run_properties)
         if self.tracked:
@@ -594,24 +627,24 @@ class DocxEditor:
 
         paragraphs = (
             [element]
-            if element.tag == _qualified_name("w:p")
-            else list(element.iter(_qualified_name("w:p")))
+            if element.tag == qualified_name("w:p")
+            else list(element.iter(qualified_name("w:p")))
         )
         for paragraph in paragraphs:
             runs = [
                 run
-                for run in paragraph.iter(_qualified_name("w:r"))
+                for run in paragraph.iter(qualified_name("w:r"))
                 if not self._in_revision(run)
             ]
             for run in runs:
                 self._wrap_runs([run], "del")
             self._mark_paragraph(paragraph, "del")
 
-        if element.tag == _qualified_name("w:tbl"):
-            for row in element.findall("w:tr", _NAMESPACES):
-                row_properties = row.find("w:trPr", _NAMESPACES)
+        if element.tag == qualified_name("w:tbl"):
+            for row in element.findall("w:tr", NAMESPACES):
+                row_properties = row.find("w:trPr", NAMESPACES)
                 if row_properties is None:
-                    row_properties = etree.Element(_qualified_name("w:trPr"))
+                    row_properties = etree.Element(qualified_name("w:trPr"))
                     row.insert(0, row_properties)
                 row_properties.append(self._revision("del"))
         # TODO: 后续补充内容控件和复杂嵌套表格的专用 tracked 删除语义。
@@ -639,36 +672,36 @@ class DocxEditor:
         Raises:
             DocumentEditError: 行或列超出表格范围。
         """
-        rows = table.findall("w:tr", _NAMESPACES)
+        rows = table.findall("w:tr", NAMESPACES)
         if row >= len(rows):
             raise DocumentEditError(f"表格行 {row} 越界，当前表格共有 {len(rows)} 行")
-        cells = rows[row].findall("w:tc", _NAMESPACES)
+        cells = rows[row].findall("w:tc", NAMESPACES)
         if col >= len(cells):
             raise DocumentEditError(
                 f"单元格 ({row}, {col}) 越界，第 {row} 行共有 {len(cells)} 个物理单元格"
             )
         cell = cells[col]
-        paragraphs = cell.findall("w:p", _NAMESPACES)
+        paragraphs = cell.findall("w:p", NAMESPACES)
         first_paragraph = paragraphs[0] if paragraphs else None
         paragraph_properties = (
-            first_paragraph.find("w:pPr", _NAMESPACES)
+            first_paragraph.find("w:pPr", NAMESPACES)
             if first_paragraph is not None
             else None
         )
         first_run = (
-            next(first_paragraph.iter(_qualified_name("w:r")), None)
+            next(first_paragraph.iter(qualified_name("w:r")), None)
             if first_paragraph is not None
             else None
         )
         run_properties = (
-            first_run.find("w:rPr", _NAMESPACES) if first_run is not None else None
+            first_run.find("w:rPr", NAMESPACES) if first_run is not None else None
         )
 
         if not self.tracked:
             for child in list(cell):
-                if child.tag != _qualified_name("w:tcPr"):
+                if child.tag != qualified_name("w:tcPr"):
                     cell.remove(child)
-            new_paragraph = etree.Element(_qualified_name("w:p"))
+            new_paragraph = etree.Element(qualified_name("w:p"))
             if paragraph_properties is not None:
                 new_paragraph.append(copy.deepcopy(paragraph_properties))
             new_paragraph.append(self._new_run(text, run_properties))
@@ -676,13 +709,13 @@ class DocxEditor:
             return f"已设置单元格 ({row}, {col})"
 
         if first_paragraph is None:
-            first_paragraph = etree.SubElement(cell, _qualified_name("w:p"))
+            first_paragraph = etree.SubElement(cell, qualified_name("w:p"))
             paragraphs = [first_paragraph]
         for extra_paragraph in paragraphs[1:]:
             self._op_delete(extra_paragraph)
         runs = [
             run
-            for run in first_paragraph.iter(_qualified_name("w:r"))
+            for run in first_paragraph.iter(qualified_name("w:r"))
             if not self._in_revision(run)
         ]
         for run in runs:
@@ -715,25 +748,25 @@ class DocxEditor:
             DocumentEditError: quote 不存在、不唯一或无法定位到文本 run。
         """
         comment_id = str(self._allocate_id())
-        range_start = etree.Element(_qualified_name("w:commentRangeStart"))
-        range_start.set(_qualified_name("w:id"), comment_id)
-        range_end = etree.Element(_qualified_name("w:commentRangeEnd"))
-        range_end.set(_qualified_name("w:id"), comment_id)
-        reference_run = etree.Element(_qualified_name("w:r"))
+        range_start = etree.Element(qualified_name("w:commentRangeStart"))
+        range_start.set(qualified_name("w:id"), comment_id)
+        range_end = etree.Element(qualified_name("w:commentRangeEnd"))
+        range_end.set(qualified_name("w:id"), comment_id)
+        reference_run = etree.Element(qualified_name("w:r"))
         reference_properties = etree.SubElement(
             reference_run,
-            _qualified_name("w:rPr"),
+            qualified_name("w:rPr"),
         )
         reference_style = etree.SubElement(
             reference_properties,
-            _qualified_name("w:rStyle"),
+            qualified_name("w:rStyle"),
         )
-        reference_style.set(_qualified_name("w:val"), "CommentReference")
+        reference_style.set(qualified_name("w:val"), "CommentReference")
         reference = etree.SubElement(
             reference_run,
-            _qualified_name("w:commentReference"),
+            qualified_name("w:commentReference"),
         )
-        reference.set(_qualified_name("w:id"), comment_id)
+        reference.set(qualified_name("w:id"), comment_id)
 
         if quote is not None:
             full_text, _ = self._run_map(paragraph)
@@ -761,7 +794,7 @@ class DocxEditor:
             runs[0].addprevious(range_start)
             runs[-1].addnext(range_end)
         else:
-            paragraph_properties = paragraph.find("w:pPr", _NAMESPACES)
+            paragraph_properties = paragraph.find("w:pPr", NAMESPACES)
             if paragraph_properties is not None:
                 paragraph_properties.addnext(range_start)
             else:
@@ -782,8 +815,8 @@ class DocxEditor:
         """
         return [
             run
-            for run in paragraph.iter(_qualified_name("w:r"))
-            if run.find("w:t", _NAMESPACES) is not None and not self._in_deletion(run)
+            for run in paragraph.iter(qualified_name("w:r"))
+            if run.find("w:t", NAMESPACES) is not None and not self._in_deletion(run)
         ]
 
     def _run_map(self, paragraph: Any) -> tuple[str, list[tuple[Any, int, int]]]:
@@ -799,7 +832,7 @@ class DocxEditor:
         parts: list[str] = []
         position = 0
         for run in self._text_runs(paragraph):
-            text = "".join(node.text or "" for node in run.findall("w:t", _NAMESPACES))
+            text = "".join(node.text or "" for node in run.findall("w:t", NAMESPACES))
             spans.append((run, position, position + len(text)))
             parts.append(text)
             position += len(text)
@@ -839,7 +872,7 @@ class DocxEditor:
         Returns:
             拆分后的左 run 和右 run。
         """
-        text = "".join(node.text or "" for node in run.findall("w:t", _NAMESPACES))
+        text = "".join(node.text or "" for node in run.findall("w:t", NAMESPACES))
         right_run = copy.deepcopy(run)
         self._set_run_text(run, text[:offset])
         self._set_run_text(right_run, text[offset:])
@@ -857,13 +890,13 @@ class DocxEditor:
         Returns:
             None。
         """
-        text_nodes = run.findall("w:t", _NAMESPACES)
+        text_nodes = run.findall("w:t", NAMESPACES)
         for extra_node in text_nodes[1:]:
             run.remove(extra_node)
         text_node = (
             text_nodes[0]
             if text_nodes
-            else etree.SubElement(run, _qualified_name("w:t"))
+            else etree.SubElement(run, qualified_name("w:t"))
         )
         text_node.text = text
         text_node.set(_XML_SPACE, "preserve")
@@ -878,7 +911,7 @@ class DocxEditor:
         Returns:
             新建的 w:r 元素。
         """
-        run = etree.Element(_qualified_name("w:r"))
+        run = etree.Element(qualified_name("w:r"))
         if run_properties is not None:
             run.append(copy.deepcopy(run_properties))
         self._set_run_text(run, text)
@@ -893,10 +926,10 @@ class DocxEditor:
         Returns:
             新建的修订 XML 元素。
         """
-        revision = etree.Element(_qualified_name(f"w:{kind}"))
-        revision.set(_qualified_name("w:id"), str(self._allocate_id()))
-        revision.set(_qualified_name("w:author"), self.author)
-        revision.set(_qualified_name("w:date"), self.timestamp)
+        revision = etree.Element(qualified_name(f"w:{kind}"))
+        revision.set(qualified_name("w:id"), str(self._allocate_id()))
+        revision.set(qualified_name("w:author"), self.author)
+        revision.set(qualified_name("w:date"), self.timestamp)
         return revision
 
     def _wrap_insertion(self, run: Any) -> Any:
@@ -926,8 +959,8 @@ class DocxEditor:
         runs[0].addprevious(wrapper)
         for run in runs:
             if kind == "del":
-                for text_node in run.findall("w:t", _NAMESPACES):
-                    text_node.tag = _qualified_name("w:delText")
+                for text_node in run.findall("w:t", NAMESPACES):
+                    text_node.tag = qualified_name("w:delText")
             wrapper.append(run)
         return wrapper
 
@@ -941,15 +974,15 @@ class DocxEditor:
         Returns:
             None。
         """
-        paragraph_properties = paragraph.find("w:pPr", _NAMESPACES)
+        paragraph_properties = paragraph.find("w:pPr", NAMESPACES)
         if paragraph_properties is None:
-            paragraph_properties = etree.Element(_qualified_name("w:pPr"))
+            paragraph_properties = etree.Element(qualified_name("w:pPr"))
             paragraph.insert(0, paragraph_properties)
-        marker_properties = paragraph_properties.find("w:rPr", _NAMESPACES)
+        marker_properties = paragraph_properties.find("w:rPr", NAMESPACES)
         if marker_properties is None:
             marker_properties = etree.SubElement(
                 paragraph_properties,
-                _qualified_name("w:rPr"),
+                qualified_name("w:rPr"),
             )
         marker_properties.insert(0, self._revision(kind))
 
@@ -964,7 +997,7 @@ class DocxEditor:
             位于 w:del 祖先内时返回 True。
         """
         return any(
-            ancestor.tag == _qualified_name("w:del")
+            ancestor.tag == qualified_name("w:del")
             for ancestor in element.iterancestors()
         )
 
@@ -978,10 +1011,80 @@ class DocxEditor:
         Returns:
             位于 w:ins 或 w:del 祖先内时返回 True。
         """
-        revision_tags = {_qualified_name("w:ins"), _qualified_name("w:del")}
+        revision_tags = {qualified_name("w:ins"), qualified_name("w:del")}
         return any(
             ancestor.tag in revision_tags for ancestor in element.iterancestors()
         )
+
+    def _ensure_w14_declared(self) -> None:
+        """确保 document.xml 根节点以 w14 前缀声明 Word 2010 命名空间并标记可忽略。
+
+        lxml 不能修改已有元素的命名空间声明，因此在缺少声明时以扩展后的
+        nsmap 重建根节点并迁移子节点；旧版 Word 通过 mc:Ignorable 忽略 w14。
+
+        Returns:
+            None。
+        """
+        root = self.document
+        if NAMESPACES["w14"] in root.nsmap.values():
+            return
+        nsmap = dict(root.nsmap)
+        nsmap["w14"] = NAMESPACES["w14"]
+        mc_prefix = next(
+            (
+                prefix
+                for prefix, uri in nsmap.items()
+                if uri == _MARKUP_COMPATIBILITY_NAMESPACE
+            ),
+            None,
+        )
+        if mc_prefix is None:
+            mc_prefix = "mc"
+            nsmap[mc_prefix] = _MARKUP_COMPATIBILITY_NAMESPACE
+        new_root = etree.Element(root.tag, attrib=dict(root.attrib), nsmap=nsmap)
+        new_root.text = root.text
+        for child in list(root):
+            new_root.append(child)
+        ignorable_name = f"{{{_MARKUP_COMPATIBILITY_NAMESPACE}}}Ignorable"
+        ignorable = new_root.get(ignorable_name, "").split()
+        if "w14" not in ignorable:
+            new_root.set(ignorable_name, " ".join([*ignorable, "w14"]))
+        self.document = new_root
+
+    def _collect_used_para_ids(self) -> set[str]:
+        """收集包内所有 XML 部件及当前正文树中已使用的 paraId。
+
+        Returns:
+            大写十六进制 paraId 集合。
+        """
+        used_ids: set[str] = set()
+        for name in self.archive.namelist():
+            if name.endswith(".xml") and name != _DOCUMENT_PART:
+                used_ids.update(
+                    match.decode().upper()
+                    for match in _PARA_ID_PATTERN.findall(self.archive.read(name))
+                )
+        used_ids.update(
+            value.upper()
+            for paragraph in self.document.iter(qualified_name("w:p"))
+            if (value := paragraph.get(qualified_name("w14:paraId"))) is not None
+        )
+        return used_ids
+
+    @staticmethod
+    def _new_hex_id(used_ids: set[str]) -> str:
+        """生成不在 used_ids 中、小于 0x80000000 的 8 位大写十六进制 ID。
+
+        Args:
+            used_ids: 需要避开的已用 ID。
+
+        Returns:
+            新 ID。
+        """
+        while True:
+            candidate = f"{secrets.randbelow(_MAX_PARA_ID) + 1:08X}"
+            if candidate not in used_ids:
+                return candidate
 
     def _maximum_existing_id(self) -> int:
         """查找正文修订、批注和书签使用过的最大非负整数 ID。
@@ -996,8 +1099,8 @@ class DocxEditor:
             "w:commentRangeStart",
             "w:bookmarkStart",
         ):
-            for element in self.document.iter(_qualified_name(tag)):
-                value = element.get(_qualified_name("w:id"))
+            for element in self.document.iter(qualified_name(tag)):
+                value = element.get(qualified_name("w:id"))
                 if value and value.isdigit():
                     identifiers.append(int(value))
         identifiers.extend(
@@ -1058,17 +1161,17 @@ class DocxEditor:
         comments_root = self._load_part(_COMMENTS_PART)
         if comments_root is None:
             comments_root = etree.Element(
-                _qualified_name("w:comments"),
-                nsmap={"w": _NAMESPACES["w"]},
+                qualified_name("w:comments"),
+                nsmap={"w": NAMESPACES["w"]},
             )
         self._ensure_comments_registered()
 
-        comment = etree.SubElement(comments_root, _qualified_name("w:comment"))
-        comment.set(_qualified_name("w:id"), comment_id)
-        comment.set(_qualified_name("w:author"), self.author)
-        comment.set(_qualified_name("w:date"), self.timestamp)
-        comment.set(_qualified_name("w:initials"), self.author[:2])
-        paragraph = etree.SubElement(comment, _qualified_name("w:p"))
+        comment = etree.SubElement(comments_root, qualified_name("w:comment"))
+        comment.set(qualified_name("w:id"), comment_id)
+        comment.set(qualified_name("w:author"), self.author)
+        comment.set(qualified_name("w:date"), self.timestamp)
+        comment.set(qualified_name("w:initials"), self.author[:2])
+        paragraph = etree.SubElement(comment, qualified_name("w:p"))
         paragraph.append(self._new_run(text))
         self.extra_parts[_COMMENTS_PART] = self._serialize(comments_root)
         # TODO: 后续补充 commentsExtended.xml 等新版 Word 批注扩展部件。

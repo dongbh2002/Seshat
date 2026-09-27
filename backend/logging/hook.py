@@ -6,8 +6,8 @@ import logging
 from time import perf_counter
 from typing import Any, ClassVar
 
+from backend.hooks import HookContext, HookEngine, HookEvent
 from backend.logging.formatter import log_event
-from backend.runtime.hook_engine import HookContext, HookEngine, HookEvent
 
 
 class LoggingHook:
@@ -128,6 +128,8 @@ class LoggingHook:
         fields: dict[str, Any] = {}
         if context.event in self.before_events:
             fields["input"] = context.payload
+            if "context" in context.metadata:
+                fields["context"] = context.metadata["context"]
         elif context.event in self.after_events:
             fields["output"] = context.result
             duration_ms = self._duration_ms(context)

@@ -10,14 +10,14 @@ from typing import Any
 from openai import OpenAI
 
 from backend.config import Settings
-from backend.runtime.context_engine import ContextEngine
-from backend.runtime.hook_engine import (
+from backend.hooks import (
     HookContext,
     HookEngine,
     HookEvent,
     HookExecutionError,
     HookScope,
 )
+from backend.runtime.context.engine import ContextEngine
 from backend.runtime.tool_engine import ToolEngine
 
 
@@ -57,7 +57,7 @@ class AgentLoop:
         self.default_request_options = (  # 当前模型的默认请求参数。
             dict(settings.active_model.parameters)
         )
-        self.messages: list[dict[str, Any]] = []  # 已完成轮次的原始对话历史。
+        self.messages: list[dict[str, Any]] = []  # 已完成轮次的工作消息（压缩后写回）。
 
     def run(
         self,
@@ -87,16 +87,24 @@ class AgentLoop:
         active_turn: list[dict[str, Any]] = [{"role": "user", "content": user_input}]
 
         for step_index in range(self.max_steps):
-            model_messages = self.context_engine.get_final_context(
+            definitions = self.tool_engine.get_definitions()
+            build = self.context_engine.get_final_context(
                 history=self.messages,
                 active_turn=active_turn,
+                tool_definitions=definitions,
             )
+            # 压缩结果写回，下一步在其上继续；被清理和归档的原文以日志为准。
+            self.messages = list(build.history)
+            active_turn = list(build.active_turn)
+            model_messages = build.messages
             options = copy.deepcopy({**self.default_request_options, **request_options})
-            definitions = self.tool_engine.get_definitions()
             if definitions:
                 options["tools"] = definitions
 
-            metadata: dict[str, Any] = {"step": step_index + 1}
+            metadata: dict[str, Any] = {  # 本步各 Hook 共享的扩展数据。
+                "step": step_index + 1,
+                "context": build.report,
+            }
             payload = {
                 "model": self.model,
                 "messages": copy.deepcopy(model_messages),
@@ -190,13 +198,13 @@ class AgentLoop:
         raise RuntimeError(f"Agent 工具调用超过最大轮数: {self.max_steps}")
 
     def reset(self) -> None:
-        """清空当前对话历史。
+        """清空当前对话历史及上下文引擎的会话状态。
 
         Returns:
             None。
         """
         self.messages.clear()
-        # TODO: 滚动历史摘要接入后，同步重置 ContextEngine 的会话状态。
+        self.context_engine.reset()
 
     def _execute_tool(
         self,

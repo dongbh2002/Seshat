@@ -134,7 +134,9 @@ def test_write_document_direct_operations_to_new_file(tmp_path: Path) -> None:
         None；修改结果不符合预期时由断言报告失败。
     """
     source_path = _copy_sample(tmp_path, "source.docx")
-    reader = ReadDocumentTool(tmp_path)
+    reader = ReadDocumentTool(
+        tmp_path, default_max_chars=20_000, max_chars_limit=100_000
+    )
     writer = WriteDocumentTool(tmp_path)
     source_before = reader.execute(path=source_path.name, max_chars=100_000)
     target_id = _find_block_id(source_before["markdown"], "Preparation of Articles")
@@ -170,10 +172,7 @@ def test_write_document_direct_operations_to_new_file(tmp_path: Path) -> None:
     assert "2022" in source_after["markdown"]
     assert "2026" in edited["markdown"]
     assert "Seshat write tool inserted paragraph." in edited["markdown"]
-    assert any(
-        comment["text"] == "Please review the publication year."
-        for comment in edited["comments"]
-    )
+    assert "Please review the publication year." in edited["markdown"]
     assert result["operation_count"] == 3
     assert result["previous_revision"] == source_before["revision"]
     assert result["revision"] == edited["revision"]
@@ -190,7 +189,9 @@ def test_write_document_tracked_replace_can_be_read_back(tmp_path: Path) -> None
         None；修订结构或回读结果不符合预期时由断言报告失败。
     """
     document_path = _copy_sample(tmp_path, "tracked.docx")
-    reader = ReadDocumentTool(tmp_path)
+    reader = ReadDocumentTool(
+        tmp_path, default_max_chars=20_000, max_chars_limit=100_000
+    )
     writer = WriteDocumentTool(tmp_path)
     before = reader.execute(path=document_path.name, max_chars=100_000)
     target_id = _find_block_id(before["markdown"], "Preparation of Articles")
@@ -238,7 +239,9 @@ def test_write_document_delete_removes_target_block(tmp_path: Path) -> None:
         None；目标块仍能被读取时由断言报告失败。
     """
     document_path = _copy_sample(tmp_path, "delete.docx")
-    reader = ReadDocumentTool(tmp_path)
+    reader = ReadDocumentTool(
+        tmp_path, default_max_chars=20_000, max_chars_limit=100_000
+    )
     writer = WriteDocumentTool(tmp_path)
     before = reader.execute(path=document_path.name, max_chars=100_000)
     target_text = "Preparation of Articles for IEEE TRANSACTIONS and JOURNALS"
@@ -266,7 +269,9 @@ def test_write_document_set_cell_updates_table_text(tmp_path: Path) -> None:
         None；表格内容没有正确更新时由断言报告失败。
     """
     document_path = _create_document_with_table(tmp_path)
-    reader = ReadDocumentTool(tmp_path)
+    reader = ReadDocumentTool(
+        tmp_path, default_max_chars=20_000, max_chars_limit=100_000
+    )
     writer = WriteDocumentTool(tmp_path)
     before = reader.execute(path=document_path.name, max_chars=100_000)
     table_id = next(
@@ -306,7 +311,9 @@ def test_write_document_rejects_stale_revision_without_changing_file(
         None；工具未拒绝旧版本或改变了文件时由断言报告失败。
     """
     document_path = _copy_sample(tmp_path, "stale.docx")
-    reader = ReadDocumentTool(tmp_path)
+    reader = ReadDocumentTool(
+        tmp_path, default_max_chars=20_000, max_chars_limit=100_000
+    )
     writer = WriteDocumentTool(tmp_path)
     before = reader.execute(path=document_path.name, max_chars=100_000)
     target_id = _find_block_id(before["markdown"], "Preparation of Articles")

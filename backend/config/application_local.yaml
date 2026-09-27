@@ -7,15 +7,34 @@ tenants:
     session_name: pe
 
 agent_loop:
-  max_steps: 8
+  max_steps: 12
 
 context:
+  budget:
+    working_tokens: 32000
+    output_reserve_tokens: 8000
+    initial_chars_per_token: 2.0
+    calibration_weight: 0.3
   compression:
-    tool_cleanup_threshold_chars: 60000
-    turn_compaction_threshold_chars: 80000
-    hard_limit_chars: 100000
+    read_cleanup_trigger_ratio: 0.6
+    read_cleanup_target_ratio: 0.3
+    turn_compaction_trigger_ratio: 0.8
+    turn_compaction_target_ratio: 0.5
     keep_recent_turns: 4
-    summary_max_chars: 12000
+    retain_recent_turn_reads: 1
+    summary_max_ratio: 0.1
+    cleanup_after_turn_end: true
+  review_state:
+    outline_max_level: 2
+    max_open_findings: 30
+    finding_max_chars: 200
+
+documents:
+  section_heading_level: 1
+  summary_cache_path: cache/section_summaries.json
+  summary_max_chars: 300
+  read_default_max_chars: 10000
+  read_max_chars: 30000
 
 logging:
   level: INFO
@@ -30,8 +49,9 @@ models:
     api_key_env: KIMI-K26_API_KEY
     base_url_env: KIMI-K26_BASE_URL
     model_name_env: KIMI-K26_MODEL_NAME
+    context_window_tokens: 262144
     parameters:
-      max_completion_tokens: 50000
+      max_completion_tokens: 8000
       extra_body:
         thinking:
           type: disabled
