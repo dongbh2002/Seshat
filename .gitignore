@@ -6,9 +6,13 @@
 /.pytest_cache/
 /logs/*
 /cache/
-/backend/data_agent/sessions/
-# 游客工作区，目录名对应 application_local.yaml 的 identity.guest_tenant。
-/backend/data_agent/tenant_packs/guest/
+/data/*
+!/data/workspaces/
+/data/workspaces/*
+!/data/workspaces/README.md
+!/data/sessions/
+/data/sessions/*
+!/data/sessions/README.md
 !/logs/example.log
 __pycache__/
 *.py[cod]

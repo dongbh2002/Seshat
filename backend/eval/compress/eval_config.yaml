@@ -1,5 +1,5 @@
 # 本文件保存上下文压缩评估的参数；被测系统本身的配置仍读取 backend/config/application_local.yaml。
-document: backend/data_agent/tenant_packs/233/dbh/PE.docx  # 评估文档，运行时复制到临时目录，不修改原文件。
+document: tests/fixtures/PE.docx  # 评估文档，运行时复制到临时目录，不修改原文件。
 usage_chars_per_token: 3.3  # 脚本化模型返回 usage 时的字符/token 比例（取自真实日志实测）。
 answer_chars: 400  # 脚本化模型每次最终回复的字符数。
 budgets: [8000, 16000, 32000]  # 评估的 working_tokens，用“文档相对预算的大小”模拟更长的论文。

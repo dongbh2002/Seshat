@@ -18,10 +18,10 @@ class IdentitySettings:
 
 
 @dataclass(frozen=True)
-class SessionSettings:
-    """会话持久化配置。"""
+class DataSettings:
+    """运行时数据目录配置。"""
 
-    root: str  # 会话文件根目录，相对项目根目录或绝对路径；其下按租户/用户分层。
+    root: str  # 数据根目录，相对项目根目录或绝对路径；子目录布局见 bootstrap/paths.py。
 
 
 @dataclass(frozen=True)
@@ -110,7 +110,7 @@ class Settings:
     """Seshat 启动后由各组件共享的类型化项目配置。"""
 
     identity: IdentitySettings  # 游客身份配置。
-    sessions: SessionSettings  # 会话持久化配置。
+    data: DataSettings  # 运行时数据目录配置。
     agent_loop: AgentLoopSettings  # Agent 循环配置。
     context: ContextSettings  # 上下文组装与压缩配置。
     documents: DocumentSettings  # 文档结构索引与章节子任务配置。
@@ -153,9 +153,9 @@ def parse_settings(data: Mapping[str, Any]) -> Settings:
         ),
     )
 
-    sessions_data = _require_mapping(data.get("sessions"), "sessions")
-    sessions = SessionSettings(
-        root=_require_string(sessions_data.get("root"), "sessions.root"),
+    data_section = _require_mapping(data.get("data"), "data")
+    data_settings = DataSettings(
+        root=_require_string(data_section.get("root"), "data.root"),
     )
 
     agent_loop_data = _require_mapping(data.get("agent_loop"), "agent_loop")
@@ -320,7 +320,7 @@ def parse_settings(data: Mapping[str, Any]) -> Settings:
 
     return Settings(
         identity=identity,
-        sessions=sessions,
+        data=data_settings,
         agent_loop=agent_loop,
         context=ContextSettings(
             budget=budget,

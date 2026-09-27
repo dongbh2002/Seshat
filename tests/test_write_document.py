@@ -13,15 +13,7 @@ from lxml import etree  # pyright: ignore[reportAttributeAccessIssue]
 from backend.tools import ReadDocumentTool, WriteDocumentTool
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-_SAMPLE_DOCUMENT = (
-    _PROJECT_ROOT
-    / "backend"
-    / "data_agent"
-    / "tenant_packs"
-    / "233"
-    / "dbh"
-    / "PE.docx"
-)
+_SAMPLE_DOCUMENT = _PROJECT_ROOT / "tests" / "fixtures" / "PE.docx"
 _WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _NAMESPACES = {"w": _WORD_NAMESPACE}
 

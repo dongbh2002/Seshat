@@ -5,8 +5,9 @@ identity:
   guest_tenant: guest
   guest_user_prefix: guest
 
-sessions:
-  root: backend/data_agent/sessions
+# 运行时数据根目录：其下 workspaces/<租户>/<用户>/ 存放待处理文档，sessions/<租户>/<用户>/ 存放会话文件。
+data:
+  root: data
 
 agent_loop:
   max_steps: 12
