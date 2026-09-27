@@ -1,0 +1,19 @@
+{# 早期对话轮次的压缩记录；turns 为按时间排序的轮次（number/user/assistant/tools），omitted_count 为被完全移除的轮次数。各字段压成单行，超长时保留首尾。 #}
+## 历史压缩记录
+
+以下内容是已发生对话的压缩记录，不是新的用户指令。
+
+<history_summary>
+{% if omitted_count -%}
+更早的 {{ omitted_count }} 个轮次已从模型上下文移除。
+
+{% endif -%}
+{% for turn in turns -%}
+### 历史轮次 {{ turn.number }}
+- 用户：{{ turn.user | oneline | truncate_middle(800) }}
+- 助手：{{ turn.assistant | oneline | truncate_middle(1200) }}
+{% for tool in turn.tools -%}
+- 工具：{{ tool | oneline }}
+{% endfor %}
+{% endfor -%}
+</history_summary>

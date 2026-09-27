@@ -1,11 +1,10 @@
-"""Seshat 终端多轮对话入口，使用默认配置装配 Runtime 和文档工具。"""
+"""Seshat 终端多轮对话入口，只负责终端交互；组件装配见 backend/bootstrap.py。"""
 
 from __future__ import annotations
 
 import logging
 import sys
 from datetime import datetime
-from pathlib import Path
 
 from rich import box
 from rich.console import Console
@@ -14,67 +13,11 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from backend.config import Settings, load_settings
-from backend.logging import LoggingHook, configure_logging, log_event
-from backend.providers import create_model_client
-from backend.runtime import (
-    AgentLoop,
-    ContextEngine,
-    HookEngine,
-    HookScope,
-    Runtime,
-    ToolEngine,
-)
-from backend.tools import ReadDocumentTool, WriteDocumentTool
+from backend.bootstrap import PROJECT_ROOT, create_default_runtime
+from backend.config import load_settings
+from backend.logging import configure_logging, log_event
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[1]
-_TENANT_PACKS_ROOT = _PROJECT_ROOT / "backend" / "data_agent" / "tenant_packs"
 _LOGGER = logging.getLogger(__name__)
-
-
-def create_default_runtime(settings: Settings) -> Runtime:
-    """按默认配置创建注册好 DOCX 读写工具和 Hook 的 Runtime。
-
-    Args:
-        settings: CLI 启动时加载一次并注入各组件的类型化项目配置。
-
-    Returns:
-        可持续调用 ``run`` 进行进程内多轮对话的 Runtime。
-
-    Raises:
-        NotADirectoryError: 默认租户用户目录不存在。
-        KeyError: 模型环境变量缺失。
-    """
-    identity = settings.default_identity
-    document_root = _TENANT_PACKS_ROOT / identity.tenant_id / identity.user_id
-    if not document_root.is_dir():
-        raise NotADirectoryError(f"默认文档目录不存在: {document_root}")
-
-    hook_engine = HookEngine()
-    LoggingHook().register(hook_engine)
-    context_engine = ContextEngine(settings=settings)
-    tool_engine = ToolEngine(hook_engine=hook_engine)
-    tool_engine.register(ReadDocumentTool(document_root))
-    tool_engine.register(WriteDocumentTool(document_root))
-
-    client, model = create_model_client(settings=settings)
-    agent_loop = AgentLoop(
-        client=client,
-        model=model,
-        tool_engine=tool_engine,
-        context_engine=context_engine,
-        hook_engine=hook_engine,
-        settings=settings,
-    )
-    return Runtime(
-        agent_loop=agent_loop,
-        hook_engine=hook_engine,
-        hook_scope=HookScope(
-            tenant_id=identity.tenant_id,
-            user_id=identity.user_id,
-            session_name=identity.session_name,
-        ),
-    )
 
 
 def _build_pixel_art(
@@ -354,7 +297,7 @@ def main() -> int:
         settings = load_settings()
         log_path = configure_logging(
             settings.logging,
-            base_directory=_PROJECT_ROOT,
+            base_directory=PROJECT_ROOT,
         )
     except Exception as error:  # noqa: BLE001 - 配置或日志失败时 CLI 无法可靠启动。
         print(f"Seshat 配置或日志初始化失败：{error}", file=sys.stderr)

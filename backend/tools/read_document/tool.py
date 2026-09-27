@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import Any, ClassVar
 from zipfile import BadZipFile, ZipFile
 
 from backend.tools.base import BaseTool, ToolImpact
-from backend.tools.read_document.models import _DocumentBlock
-from backend.tools.read_document.parser import _NAMESPACES, _DocxParser
+from backend.utils.docx import (
+    NAMESPACES,
+    DocumentBlock,
+    DocxParser,
+    calculate_revision,
+    resolve_docx_path,
+)
 
 
 class ReadDocumentTool(BaseTool):
@@ -17,73 +21,103 @@ class ReadDocumentTool(BaseTool):
 
     name: ClassVar[str] = "read_document"  # 模型调用文档读取功能时使用的名称。
     description: ClassVar[str] = (  # 提供给模型的文档读取功能说明。
-        "读取 DOCX 的结构化 Markdown，可按稳定 ID 分块续读。"
+        "读取 DOCX 的结构化 Markdown，可按稳定 ID 分块续读；"
+        "用 start_id 和 end_id 读取指定范围（如某一章或单个块）。"
     )
     impact: ClassVar[ToolImpact] = ToolImpact.READ_ONLY  # 读取操作不改变文档状态。
     timeout_seconds: ClassVar[float] = 300.0  # DOCX 读取的默认超时时间。
     min_character_limit: ClassVar[int] = 1_000  # 允许的最小返回字符上限。
-    max_character_limit: ClassVar[int] = 100_000  # 允许的最大返回字符上限。
-    default_max_chars: ClassVar[int] = 20_000  # 单次返回 Markdown 的默认字符上限。
-    parameters: ClassVar[dict[str, Any]] = {  # 文档读取工具的输入参数定义。
-        "type": "object",
-        "properties": {
-            "path": {
-                "type": "string",
-                "description": "相对于允许工作目录的 DOCX 路径。",
-            },
-            "mode": {
-                "type": "string",
-                "enum": ["accepted", "markup"],
-                "default": "accepted",
-                "description": "接受修订后的文本，或显式显示插入和删除标记。",
-            },
-            "view": {
-                "type": "string",
-                "enum": ["content", "outline"],
-                "default": "content",
-                "description": "读取正文内容或仅返回标题大纲。",
-            },
-            "start_id": {
-                "type": "string",
-                "description": "从指定内容块 ID 开始续读。",
-            },
-            "max_chars": {
-                "type": "integer",
-                "minimum": min_character_limit,
-                "maximum": max_character_limit,
-                "default": default_max_chars,
-                "description": "单次返回 Markdown 的字符上限，按完整内容块截断。",
-            },
-        },
-        "required": ["path"],
-        "additionalProperties": False,
-    }
 
-    def __init__(self, root_directory: Path) -> None:
+    def __init__(
+        self,
+        root_directory: Path,
+        *,
+        default_max_chars: int,
+        max_chars_limit: int,
+    ) -> None:
         """初始化 DOCX 读取工具。
 
         Args:
             root_directory: 工具允许读取的根目录。
+            default_max_chars: 模型未指定 max_chars 时单次返回的字符上限。
+            max_chars_limit: 模型可指定的 max_chars 最大值。
 
         Returns:
             None。
 
         Raises:
             NotADirectoryError: 指定根目录不存在或不是目录。
+            ValueError: 字符上限不满足 最小值 <= 默认值 <= 最大值。
         """
         resolved_root = root_directory.resolve()
         if not resolved_root.is_dir():
             raise NotADirectoryError(f"文档根目录不存在: {resolved_root}")
+        if not self.min_character_limit <= default_max_chars <= max_chars_limit:
+            raise ValueError(
+                f"读取字符上限须满足 {self.min_character_limit} <= "
+                f"default_max_chars({default_max_chars}) <= "
+                f"max_chars_limit({max_chars_limit})"
+            )
         self.root_directory = resolved_root  # 工具允许访问的已解析根目录。
+        self.default_max_chars = default_max_chars  # 未指定时单次返回的字符上限。
+        self.max_chars_limit = max_chars_limit  # 单次返回允许的最大字符数。
+        self.parameters = self._build_parameters()  # 按实例上限生成的参数定义。
+
+    def _build_parameters(self) -> dict[str, Any]:
+        """生成带本实例字符上限的输入参数 JSON Schema。
+
+        Returns:
+            read_document 的参数定义。
+        """
+        return {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "相对于允许工作目录的 DOCX 路径。",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["accepted", "markup"],
+                    "default": "accepted",
+                    "description": "接受修订后的文本，或显式显示插入和删除标记。",
+                },
+                "view": {
+                    "type": "string",
+                    "enum": ["content", "outline"],
+                    "default": "content",
+                    "description": "读取正文内容或仅返回标题大纲。",
+                },
+                "start_id": {
+                    "type": "string",
+                    "description": "从指定内容块 ID 开始读取；省略时从文档开头读取。",
+                },
+                "end_id": {
+                    "type": "string",
+                    "description": "读到指定内容块 ID 为止（包含该块）；省略时读到文档末尾。",
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "minimum": self.min_character_limit,
+                    "maximum": self.max_chars_limit,
+                    "default": self.default_max_chars,
+                    "description": "单次返回 Markdown 的字符上限，按完整内容块截断。",
+                },
+            },
+            "required": ["path"],
+            "additionalProperties": False,
+        }
 
     def execute(self, **arguments: Any) -> dict[str, Any]:
         """读取 DOCX 并返回可供模型阅读和后续修改定位的结果。
 
         Args:
-            **arguments: 文档路径、修订模式、视图、起始 ID 和字符上限。
+            **arguments: 文档路径、修订模式、视图、起止 ID 和字符上限。
 
         Returns:
-            Markdown、轻量结构索引、版本、附加部件、统计信息和续读 ID。
+            Markdown（含块 ID 与内嵌批注）、带位置的结构索引、版本、与本次
+            正文相关的附加内容、统计信息、续读 ID，以及读取正文时提示模型
+            标记审阅范围的 review_hint。
 
         Raises:
             ValueError: 参数、文件格式或 DOCX 内部结构无效。
@@ -106,18 +140,21 @@ class ReadDocumentTool(BaseTool):
             not isinstance(start_id, str) or not start_id.strip()
         ):
             raise ValueError("start_id 必须是非空字符串")
+        end_id = arguments.get("end_id")
+        if end_id is not None and (not isinstance(end_id, str) or not end_id.strip()):
+            raise ValueError("end_id 必须是非空字符串")
         max_chars = arguments.get("max_chars", self.default_max_chars)
         if (
             not isinstance(max_chars, int)
             or isinstance(max_chars, bool)
-            or not self.min_character_limit <= max_chars <= self.max_character_limit
+            or not self.min_character_limit <= max_chars <= self.max_chars_limit
         ):
             raise ValueError("max_chars 超出范围")
 
-        document_path = self._resolve_path(path_argument)
+        document_path = resolve_docx_path(self.root_directory, path_argument)
         try:
             with ZipFile(document_path) as archive:
-                parser = _DocxParser(archive)
+                parser = DocxParser(archive)
                 all_blocks = parser.parse_blocks(mode)
                 candidate_blocks = (
                     [block for block in all_blocks if block.kind == "heading"]
@@ -127,25 +164,28 @@ class ReadDocumentTool(BaseTool):
                 returned_blocks, markdown, next_id = self._select_blocks(
                     candidate_blocks,
                     start_id=start_id,
+                    end_id=end_id,
                     max_chars=max_chars,
                 )
-                extras = parser.read_extras(mode)
+                extras = self._select_extras(
+                    parser.read_extras(mode),
+                    markdown,
+                    from_document_start=start_id is None and view == "content",
+                )
                 warnings = parser.get_warnings()
-                comments = list(parser.comments.values())
         except BadZipFile as error:
             raise ValueError(f"文件不是有效的 DOCX: {path_argument}") from error
 
         relative_path = document_path.relative_to(self.root_directory).as_posix()
-        return {
+        result: dict[str, Any] = {
             "path": relative_path,
-            "revision": self._calculate_revision(document_path),
+            "revision": calculate_revision(document_path),
             "mode": mode,
             "view": view,
             "markdown": markdown,
-            "index": [block.to_index() for block in returned_blocks],
+            "index": self._build_index(returned_blocks),
             "next_id": next_id,
             "extras": extras,
-            "comments": comments,
             "metadata": {
                 "block_count": len(all_blocks),
                 "returned_block_count": len(returned_blocks),
@@ -153,81 +193,119 @@ class ReadDocumentTool(BaseTool):
                 "table_count": sum(block.kind == "table" for block in all_blocks),
                 "changed_block_count": sum(block.has_changes for block in all_blocks),
                 "section_count": len(
-                    parser.document.findall(".//w:sectPr", _NAMESPACES)
+                    parser.document.findall(".//w:sectPr", NAMESPACES)
                 ),
                 "drawing_count": len(
-                    parser.document.findall(".//w:drawing", _NAMESPACES)
+                    parser.document.findall(".//w:drawing", NAMESPACES)
                 ),
                 "truncated": next_id is not None,
             },
             "warnings": warnings,
         }
+        if view == "content" and returned_blocks:
+            result["review_hint"] = (
+                "读完后请调用 update_review_state："
+                f"mark_reviewed start_id={returned_blocks[0].block_id} "
+                f"end_id={returned_blocks[-1].block_id}，发现问题同时 add_finding；"
+                "未标记的正文在上下文紧张时无法清理。"
+            )
+        return result
 
-    def _resolve_path(self, path: str) -> Path:
-        """解析并校验工具调用提供的 DOCX 路径。
+    @staticmethod
+    def _select_extras(
+        extras: dict[str, list[dict[str, str]]],
+        markdown: str,
+        *,
+        from_document_start: bool,
+    ) -> dict[str, list[dict[str, str]]]:
+        """只返回与本次读取相关的正文外内容，避免分页读取时重复。
+
+        脚注、尾注只保留正文中出现引用标记（[脚注:N] / [尾注:N]）的条目；
+        页眉页脚只在从文档开头读取正文时返回。
 
         Args:
-            path: 相对路径或位于允许根目录内的绝对路径。
+            extras: 解析器读取的全部页眉、页脚、脚注和尾注。
+            markdown: 本次返回的正文。
+            from_document_start: 是否从文档开头读取正文。
 
         Returns:
-            已解析且通过访问范围检查的 DOCX 文件路径。
-
-        Raises:
-            ValueError: 文件扩展名不是 DOCX。
-            PermissionError: 解析后的路径超出允许根目录。
-            FileNotFoundError: 路径不存在或不是文件。
+            筛选后的附加内容，没有内容的类别不出现。
         """
-        requested_path = Path(path)
-        candidate = (
-            requested_path
-            if requested_path.is_absolute()
-            else self.root_directory / requested_path
-        )
-        resolved_path = candidate.resolve()
-        try:
-            resolved_path.relative_to(self.root_directory)
-        except ValueError as error:
-            raise PermissionError(f"禁止访问工作目录外的文档: {path}") from error
+        selected: dict[str, list[dict[str, str]]] = {}
+        for key, marker in (("footnotes", "脚注"), ("endnotes", "尾注")):
+            referenced = [
+                item
+                for item in extras.get(key, [])
+                if f"[{marker}:{item.get('id')}]" in markdown
+            ]
+            if referenced:
+                selected[key] = referenced
+        if from_document_start:
+            for key in ("headers", "footers"):
+                if extras.get(key):
+                    selected[key] = extras[key]
+        return selected
 
-        if resolved_path.suffix.lower() != ".docx":
-            raise ValueError(f"当前仅支持 DOCX 文档: {path}")
-        if not resolved_path.is_file():
-            raise FileNotFoundError(f"文档不存在: {path}")
-        return resolved_path
+    @staticmethod
+    def _build_index(blocks: list[DocumentBlock]) -> list[dict[str, Any]]:
+        """生成返回块的结构索引，并记录每块在 markdown 中的位置。
+
+        markdown 由各块以两个换行拼接，offset / length 供上下文压缩按块精确
+        清理正文。
+
+        Args:
+            blocks: 本次返回的内容块。
+
+        Returns:
+            每块的索引字典，附带 offset（起始字符位置）与 length（字符数）。
+        """
+        index: list[dict[str, Any]] = []
+        offset = 0
+        for block in blocks:
+            length = len(block.to_markdown())
+            index.append({**block.to_index(), "offset": offset, "length": length})
+            offset += length + 2
+        return index
 
     @staticmethod
     def _select_blocks(
-        blocks: list[_DocumentBlock],
+        blocks: list[DocumentBlock],
         *,
         start_id: str | None,
+        end_id: str | None,
         max_chars: int,
-    ) -> tuple[list[_DocumentBlock], str, str | None]:
-        """按起始 ID 和字符上限选择完整内容块。
+    ) -> tuple[list[DocumentBlock], str, str | None]:
+        """在 start_id 到 end_id（含两端）范围内按字符上限选择完整内容块。
 
         Args:
             blocks: 当前视图下可读取的内容块。
-            start_id: 可选的续读起始内容块 ID。
+            start_id: 可选的起始内容块 ID；省略时从第一块开始。
+            end_id: 可选的结束内容块 ID；省略时到最后一块为止。
             max_chars: 单次 Markdown 返回字符上限。
 
         Returns:
-            返回块、Markdown 文本和下一次续读 ID 组成的元组。
+            返回块、Markdown 文本和续读 ID 组成的元组；续读 ID 指向范围内
+            下一块，范围已全部返回时为 None。
 
         Raises:
-            ValueError: 指定的起始 ID 不存在于当前视图。
+            ValueError: 起止 ID 不存在于当前视图，或起始块位于结束块之后。
         """
-        start_index = 0
-        if start_id is not None:
-            block_ids = [block.block_id for block in blocks]
-            try:
-                start_index = block_ids.index(start_id)
-            except ValueError as error:
-                raise ValueError(f"当前视图中不存在内容块 ID: {start_id}") from error
+        block_ids = [block.block_id for block in blocks]
+        for block_id in (start_id, end_id):
+            if block_id is not None and block_id not in block_ids:
+                raise ValueError(f"当前视图中不存在内容块 ID: {block_id}")
+        if not blocks:
+            return [], "", None
+        start_index = block_ids.index(start_id) if start_id is not None else 0
+        end_index = block_ids.index(end_id) if end_id is not None else len(blocks) - 1
+        if start_index > end_index:
+            raise ValueError(f"start_id {start_id} 位于 end_id {end_id} 之后")
 
-        returned_blocks: list[_DocumentBlock] = []
+        returned_blocks: list[DocumentBlock] = []
         markdown_parts: list[str] = []
         next_id: str | None = None
         current_length = 0
-        for block in blocks[start_index:]:
+        for block in blocks[start_index : end_index + 1]:
             block_markdown = block.to_markdown()
             added_length = len(block_markdown) + (2 if markdown_parts else 0)
             if returned_blocks and current_length + added_length > max_chars:
@@ -238,19 +316,3 @@ class ReadDocumentTool(BaseTool):
             current_length += added_length
 
         return returned_blocks, "\n\n".join(markdown_parts), next_id
-
-    @staticmethod
-    def _calculate_revision(path: Path) -> str:
-        """计算 DOCX 内容的 SHA-256 版本标识。
-
-        Args:
-            path: 需要计算版本标识的 DOCX 文件路径。
-
-        Returns:
-            文档二进制内容对应的十六进制 SHA-256 字符串。
-        """
-        digest = hashlib.sha256()
-        with path.open("rb") as document_file:
-            for chunk in iter(lambda: document_file.read(1024 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest()

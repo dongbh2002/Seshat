@@ -34,21 +34,56 @@ class AgentLoopSettings:
 
 
 @dataclass(frozen=True)
-class CompressionSettings:
-    """历史上下文的分级压缩参数。"""
+class BudgetSettings:
+    """上下文 token 预算与估算参数。"""
 
-    tool_cleanup_threshold_chars: int  # 开始清理旧工具结果的字符阈值。
-    turn_compaction_threshold_chars: int  # 开始压实早期对话的字符阈值。
-    hard_limit_chars: int  # 最终上下文允许的字符硬上限。
-    keep_recent_turns: int  # 压实时保留原文的近期完整轮次数。
-    summary_max_chars: int  # 结构化历史摘要允许的最大字符数。
+    working_tokens: int  # 工作上下文软预算；超出时强制清理并警告。
+    output_reserve_tokens: int  # 为模型输出预留的 token，计入物理上限校验。
+    initial_chars_per_token: float  # 字符到 token 的初始换算比例。
+    calibration_weight: float  # 按响应 usage 校准比例时新观测值的权重，(0, 1]。
+
+
+@dataclass(frozen=True)
+class CompressionSettings:
+    """分级压缩参数；比例均相对 working_tokens。"""
+
+    read_cleanup_trigger_ratio: float  # 第一级：开始清理读取正文的比例。
+    read_cleanup_target_ratio: float  # 第一级：清理后一次性降到的比例。
+    turn_compaction_trigger_ratio: float  # 第二级：开始归档早期轮次的比例。
+    turn_compaction_target_ratio: float  # 第二级：归档后一次性降到的比例。
+    keep_recent_turns: int  # 第二级至少保留原文的近期完整轮次数。
+    retain_recent_turn_reads: int  # 第一级不按“轮次已结束”清理的最近轮数。
+    summary_max_ratio: float  # 历史摘要允许占用的比例上限。
+    cleanup_after_turn_end: bool  # 已结束轮次中未标记审阅的读取是否允许清理。
+
+
+@dataclass(frozen=True)
+class ReviewStateSettings:
+    """审阅状态渲染进上下文时的体积约束。"""
+
+    outline_max_level: int  # 大纲展示的最大标题级别。
+    max_open_findings: int  # 展示的 open 问题最大条数，超出部分仅计数。
+    finding_max_chars: int  # 单条问题展示的字符上限。
 
 
 @dataclass(frozen=True)
 class ContextSettings:
     """上下文引擎配置。"""
 
+    budget: BudgetSettings  # 上下文 token 预算与估算配置。
     compression: CompressionSettings  # 历史上下文分级压缩配置。
+    review_state: ReviewStateSettings  # 审阅状态注入上下文时的展示上限。
+
+
+@dataclass(frozen=True)
+class DocumentSettings:
+    """文档结构索引与章节子任务配置。"""
+
+    section_heading_level: int  # 划分章节使用的最大标题级别。
+    summary_cache_path: str  # 章节摘要缓存文件，相对项目根目录或绝对路径。
+    summary_max_chars: int  # 单个章节摘要的字符上限。
+    read_default_max_chars: int  # read_document 未指定 max_chars 时的单次字符上限。
+    read_max_chars: int  # read_document 允许指定的 max_chars 最大值。
 
 
 @dataclass(frozen=True)
@@ -68,6 +103,7 @@ class ModelSettings:
     api_key_env: str  # 保存 API Key 的环境变量名称。
     base_url_env: str  # 保存兼容 API 地址的环境变量名称。
     model_name_env: str  # 保存实际模型名称的环境变量名称。
+    context_window_tokens: int  # 模型上下文窗口 token 数，用于物理上限校验。
     parameters: dict[str, Any]  # 每次模型请求默认使用的参数。
 
 
@@ -79,6 +115,7 @@ class Settings:
     tenants: dict[str, TenantSettings]  # 以租户标识索引的租户配置。
     agent_loop: AgentLoopSettings  # Agent 循环配置。
     context: ContextSettings  # 上下文组装与压缩配置。
+    documents: DocumentSettings  # 文档结构索引与章节子任务配置。
     logging: LoggingSettings  # 本地文件日志配置。
     current_model: str  # 当前启用的模型配置名称。
     models: dict[str, ModelSettings]  # 以配置名称索引的模型配置。
@@ -138,38 +175,124 @@ def parse_settings(data: Mapping[str, Any]) -> Settings:
     )
 
     context_data = _require_mapping(data.get("context"), "context")
+    budget_data = _require_mapping(context_data.get("budget"), "context.budget")
+    budget = BudgetSettings(
+        working_tokens=_require_positive_int(
+            budget_data.get("working_tokens"),
+            "context.budget.working_tokens",
+        ),
+        output_reserve_tokens=_require_positive_int(
+            budget_data.get("output_reserve_tokens"),
+            "context.budget.output_reserve_tokens",
+        ),
+        initial_chars_per_token=_require_positive_number(
+            budget_data.get("initial_chars_per_token"),
+            "context.budget.initial_chars_per_token",
+        ),
+        calibration_weight=_require_ratio(
+            budget_data.get("calibration_weight"),
+            "context.budget.calibration_weight",
+            allow_one=True,
+        ),
+    )
     compression_data = _require_mapping(
         context_data.get("compression"),
         "context.compression",
     )
     compression = CompressionSettings(
-        tool_cleanup_threshold_chars=_require_positive_int(
-            compression_data.get("tool_cleanup_threshold_chars"),
-            "context.compression.tool_cleanup_threshold_chars",
+        read_cleanup_trigger_ratio=_require_ratio(
+            compression_data.get("read_cleanup_trigger_ratio"),
+            "context.compression.read_cleanup_trigger_ratio",
         ),
-        turn_compaction_threshold_chars=_require_positive_int(
-            compression_data.get("turn_compaction_threshold_chars"),
-            "context.compression.turn_compaction_threshold_chars",
+        read_cleanup_target_ratio=_require_ratio(
+            compression_data.get("read_cleanup_target_ratio"),
+            "context.compression.read_cleanup_target_ratio",
         ),
-        hard_limit_chars=_require_positive_int(
-            compression_data.get("hard_limit_chars"),
-            "context.compression.hard_limit_chars",
+        turn_compaction_trigger_ratio=_require_ratio(
+            compression_data.get("turn_compaction_trigger_ratio"),
+            "context.compression.turn_compaction_trigger_ratio",
+        ),
+        turn_compaction_target_ratio=_require_ratio(
+            compression_data.get("turn_compaction_target_ratio"),
+            "context.compression.turn_compaction_target_ratio",
         ),
         keep_recent_turns=_require_positive_int(
             compression_data.get("keep_recent_turns"),
             "context.compression.keep_recent_turns",
         ),
-        summary_max_chars=_require_positive_int(
-            compression_data.get("summary_max_chars"),
-            "context.compression.summary_max_chars",
+        retain_recent_turn_reads=_require_non_negative_int(
+            compression_data.get("retain_recent_turn_reads"),
+            "context.compression.retain_recent_turn_reads",
+        ),
+        summary_max_ratio=_require_ratio(
+            compression_data.get("summary_max_ratio"),
+            "context.compression.summary_max_ratio",
+        ),
+        cleanup_after_turn_end=_require_bool(
+            compression_data.get("cleanup_after_turn_end"),
+            "context.compression.cleanup_after_turn_end",
         ),
     )
     if not (
-        compression.tool_cleanup_threshold_chars
-        < compression.turn_compaction_threshold_chars
-        < compression.hard_limit_chars
+        compression.read_cleanup_target_ratio
+        < compression.read_cleanup_trigger_ratio
+        < compression.turn_compaction_trigger_ratio
     ):
-        raise ValueError("上下文压缩阈值必须按工具清理、轮次压实、硬上限递增")
+        raise ValueError("压缩比例必须满足：第一级目标 < 第一级触发 < 第二级触发")
+    if (
+        compression.turn_compaction_target_ratio
+        >= compression.turn_compaction_trigger_ratio
+    ):
+        raise ValueError("压缩比例必须满足：第二级目标 < 第二级触发")
+    if compression.retain_recent_turn_reads > compression.keep_recent_turns:
+        raise ValueError(
+            "context.compression.retain_recent_turn_reads 不能大于 keep_recent_turns"
+        )
+
+    review_state_data = _require_mapping(
+        context_data.get("review_state"),
+        "context.review_state",
+    )
+    review_state = ReviewStateSettings(
+        outline_max_level=_require_positive_int(
+            review_state_data.get("outline_max_level"),
+            "context.review_state.outline_max_level",
+        ),
+        max_open_findings=_require_positive_int(
+            review_state_data.get("max_open_findings"),
+            "context.review_state.max_open_findings",
+        ),
+        finding_max_chars=_require_positive_int(
+            review_state_data.get("finding_max_chars"),
+            "context.review_state.finding_max_chars",
+        ),
+    )
+
+    documents_data = _require_mapping(data.get("documents"), "documents")
+    documents = DocumentSettings(
+        section_heading_level=_require_positive_int(
+            documents_data.get("section_heading_level"),
+            "documents.section_heading_level",
+        ),
+        summary_cache_path=_require_string(
+            documents_data.get("summary_cache_path"),
+            "documents.summary_cache_path",
+        ),
+        summary_max_chars=_require_positive_int(
+            documents_data.get("summary_max_chars"),
+            "documents.summary_max_chars",
+        ),
+        read_default_max_chars=_require_positive_int(
+            documents_data.get("read_default_max_chars"),
+            "documents.read_default_max_chars",
+        ),
+        read_max_chars=_require_positive_int(
+            documents_data.get("read_max_chars"),
+            "documents.read_max_chars",
+        ),
+    )
+    if documents.read_default_max_chars > documents.read_max_chars:
+        raise ValueError("documents.read_default_max_chars 不能大于 read_max_chars")
 
     logging_data = _require_mapping(data.get("logging"), "logging")
     level = _require_string(logging_data.get("level"), "logging.level").upper()
@@ -196,12 +319,23 @@ def parse_settings(data: Mapping[str, Any]) -> Settings:
     }
     if current_model not in models:
         raise ValueError(f"current_model 未在 models 中定义: {current_model}")
+    window_tokens = models[current_model].context_window_tokens
+    if budget.working_tokens + budget.output_reserve_tokens >= window_tokens:
+        raise ValueError(
+            "context.budget.working_tokens 与 output_reserve_tokens 之和"
+            f"必须小于当前模型的 context_window_tokens: {window_tokens}"
+        )
 
     return Settings(
         default_tenant=default_tenant,
         tenants=tenants,
         agent_loop=agent_loop,
-        context=ContextSettings(compression=compression),
+        context=ContextSettings(
+            budget=budget,
+            compression=compression,
+            review_state=review_state,
+        ),
+        documents=documents,
         logging=logging_settings,
         current_model=current_model,
         models=models,
@@ -253,6 +387,10 @@ def _parse_model_settings(model_name: str, value: Any) -> ModelSettings:
         model_name_env=_require_string(
             model.get("model_name_env"),
             f"{prefix}.model_name_env",
+        ),
+        context_window_tokens=_require_positive_int(
+            model.get("context_window_tokens"),
+            f"{prefix}.context_window_tokens",
         ),
         parameters=dict(parameters),
     )
@@ -353,4 +491,65 @@ def _require_int(value: Any, path: str) -> int:
     """
     if not isinstance(value, int) or isinstance(value, bool):
         raise TypeError(f"{path} 必须是整数")
+    return value
+
+
+def _require_positive_number(value: Any, path: str) -> float:
+    """校验配置值为正数（整数或浮点数，排除布尔值）。
+
+    Args:
+        value: 待校验的配置值。
+        path: 用于错误信息的配置路径。
+
+    Returns:
+        通过校验的浮点数。
+
+    Raises:
+        TypeError: 配置值不是数字。
+        ValueError: 数值不大于零。
+    """
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise TypeError(f"{path} 必须是数字")
+    if value <= 0:
+        raise ValueError(f"{path} 必须大于 0")
+    return float(value)
+
+
+def _require_ratio(value: Any, path: str, *, allow_one: bool = False) -> float:
+    """校验配置值为 (0, 1) 区间内的比例；allow_one 时允许等于 1。
+
+    Args:
+        value: 待校验的配置值。
+        path: 用于错误信息的配置路径。
+        allow_one: 是否允许取值 1。
+
+    Returns:
+        通过校验的比例。
+
+    Raises:
+        TypeError: 配置值不是数字。
+        ValueError: 比例越界。
+    """
+    ratio = _require_positive_number(value, path)
+    if ratio > 1 or (ratio == 1 and not allow_one):
+        upper = "不大于 1" if allow_one else "小于 1"
+        raise ValueError(f"{path} 必须{upper}")
+    return ratio
+
+
+def _require_bool(value: Any, path: str) -> bool:
+    """校验配置值为布尔值。
+
+    Args:
+        value: 待校验的配置值。
+        path: 用于错误信息的配置路径。
+
+    Returns:
+        通过校验的布尔值。
+
+    Raises:
+        TypeError: 配置值不是布尔值。
+    """
+    if not isinstance(value, bool):
+        raise TypeError(f"{path} 必须是布尔值")
     return value

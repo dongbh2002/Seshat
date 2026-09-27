@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -10,7 +9,12 @@ from typing import Any, ClassVar
 from zipfile import BadZipFile
 
 from backend.tools.base import BaseTool, ToolImpact
-from backend.tools.write_document.editor import DocumentEditError, DocxEditor
+from backend.utils.docx import (
+    DocumentEditError,
+    DocxEditor,
+    calculate_revision,
+    resolve_within_root,
+)
 
 
 class WriteDocumentTool(BaseTool):
@@ -148,7 +152,8 @@ class WriteDocumentTool(BaseTool):
             **arguments: 源路径、revision、操作列表和写入选项。
 
         Returns:
-            输出路径、新旧 revision、修改模式和逐项操作结果。
+            输出路径、新旧 revision、修改模式、逐项操作结果，以及本次为缺少
+            paraId 的段落补齐的数量（补齐后这些段落的块 ID 会改变）。
 
         Raises:
             DocumentEditError: 调用参数、内容块定位或修改语义无效。
@@ -197,7 +202,7 @@ class WriteDocumentTool(BaseTool):
                 f"输出文档已存在，如需覆盖请设置 overwrite=true: {output_path}"
             )
 
-        actual_revision = self._calculate_revision(source_path)
+        actual_revision = calculate_revision(source_path)
         if actual_revision.lower() != expected_revision.lower():
             raise DocumentEditError(
                 "文档自上次读取后已经变化，请重新调用 read_document 获取最新 ID 和 revision"
@@ -211,6 +216,7 @@ class WriteDocumentTool(BaseTool):
                 tracked=mode == "tracked",
             ) as editor:
                 operation_results = editor.apply(operations)
+                assigned_para_id_count = editor.assign_missing_para_ids()
                 editor.save(temporary_path)
             os.replace(temporary_path, output_path)
         except BadZipFile as error:
@@ -219,7 +225,7 @@ class WriteDocumentTool(BaseTool):
             if temporary_path.exists():
                 temporary_path.unlink()
 
-        new_revision = self._calculate_revision(output_path)
+        new_revision = calculate_revision(output_path)
         return {
             "source_path": source_path.relative_to(self.root_directory).as_posix(),
             "path": output_path.relative_to(self.root_directory).as_posix(),
@@ -229,6 +235,7 @@ class WriteDocumentTool(BaseTool):
             "revision": new_revision,
             "operation_count": len(operation_results),
             "operations": operation_results,
+            "assigned_para_id_count": assigned_para_id_count,
         }
 
     def _resolve_source_path(self, path_argument: Any) -> Path:
@@ -247,7 +254,7 @@ class WriteDocumentTool(BaseTool):
         """
         if not isinstance(path_argument, str) or not path_argument.strip():
             raise DocumentEditError("path 必须是非空字符串")
-        resolved_path = self._resolve_within_root(path_argument)
+        resolved_path = resolve_within_root(self.root_directory, path_argument)
         if resolved_path.suffix.lower() != ".docx":
             raise DocumentEditError(f"当前仅支持 DOCX 文档: {path_argument}")
         if not resolved_path.is_file():
@@ -277,40 +284,13 @@ class WriteDocumentTool(BaseTool):
             return default_path
         if not isinstance(path_argument, str) or not path_argument.strip():
             raise DocumentEditError("output_path 必须是非空字符串")
-        resolved_path = self._resolve_within_root(path_argument)
+        resolved_path = resolve_within_root(self.root_directory, path_argument)
         if resolved_path.suffix.lower() != ".docx":
             raise DocumentEditError(f"输出路径必须使用 .docx 扩展名: {path_argument}")
         if not resolved_path.parent.is_dir():
             raise DocumentEditError(f"输出目录不存在: {resolved_path.parent}")
         if resolved_path.exists() and not resolved_path.is_file():
             raise DocumentEditError(f"输出路径不是文件: {resolved_path}")
-        return resolved_path
-
-    def _resolve_within_root(self, path_argument: str) -> Path:
-        """解析路径并确保其位于工具允许访问的根目录内。
-
-        Args:
-            path_argument: 相对根目录的路径或根目录内的绝对路径。
-
-        Returns:
-            规范化后的绝对路径。
-
-        Raises:
-            PermissionError: 路径解析后超出允许根目录。
-        """
-        requested_path = Path(path_argument)
-        candidate = (
-            requested_path
-            if requested_path.is_absolute()
-            else self.root_directory / requested_path
-        )
-        resolved_path = candidate.resolve()
-        try:
-            resolved_path.relative_to(self.root_directory)
-        except ValueError as error:
-            raise PermissionError(
-                f"禁止访问工作目录外的文档: {path_argument}"
-            ) from error
         return resolved_path
 
     @staticmethod
@@ -330,19 +310,3 @@ class WriteDocumentTool(BaseTool):
             delete=False,
         ) as temporary_file:
             return Path(temporary_file.name)
-
-    @staticmethod
-    def _calculate_revision(path: Path) -> str:
-        """计算 DOCX 二进制内容的 SHA-256 版本标识。
-
-        Args:
-            path: 需要计算版本的 DOCX 路径。
-
-        Returns:
-            64 位十六进制 SHA-256 字符串。
-        """
-        digest = hashlib.sha256()
-        with path.open("rb") as document_file:
-            for chunk in iter(lambda: document_file.read(1024 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest()

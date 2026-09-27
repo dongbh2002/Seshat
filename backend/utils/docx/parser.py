@@ -8,7 +8,7 @@ from zipfile import ZipFile
 
 from lxml import etree  # pyright: ignore[reportAttributeAccessIssue]
 
-from backend.tools.read_document.models import _DocumentBlock
+from backend.utils.docx.models import DocumentBlock
 
 _WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _WORD_2010_NAMESPACE = "http://schemas.microsoft.com/office/word/2010/wordml"
@@ -16,7 +16,8 @@ _DRAWING_NAMESPACE = (
     "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
 )
 _MATH_NAMESPACE = "http://schemas.openxmlformats.org/officeDocument/2006/math"
-_NAMESPACES = {
+_STABLE_BLOCK_ID_PATTERN = re.compile(r"p-[0-9a-f]{8}")  # 由 w14:paraId 生成的块 ID。
+NAMESPACES = {
     "w": _WORD_NAMESPACE,
     "w14": _WORD_2010_NAMESPACE,
     "wp": _DRAWING_NAMESPACE,
@@ -24,7 +25,7 @@ _NAMESPACES = {
 }
 
 
-def _qualified_name(tag: str) -> str:
+def qualified_name(tag: str) -> str:
     """将带命名空间前缀的标签转换为 lxml 使用的完整名称。
 
     Args:
@@ -34,10 +35,26 @@ def _qualified_name(tag: str) -> str:
         形如 ``{namespace}p`` 的完整 XML 名称。
     """
     prefix, local_name = tag.split(":", maxsplit=1)
-    return f"{{{_NAMESPACES[prefix]}}}{local_name}"
+    return f"{{{NAMESPACES[prefix]}}}{local_name}"
 
 
-class _DocxParser:
+def is_position_based_block_id(block_id: str) -> bool:
+    """判断块 ID 是否按正文位置生成，插入或删除块后可能指向别的块。
+
+    段落优先使用 8 位十六进制的 w14:paraId 生成 ``p-xxxxxxxx``；缺少 paraId 的
+    段落（``p-<位置>``）、表格（``t-<位置>``）和内容控件（``content-<位置>``）
+    都按位置生成。
+
+    Args:
+        block_id: 内容块 ID。
+
+    Returns:
+        按位置生成时为 True。
+    """
+    return _STABLE_BLOCK_ID_PATTERN.fullmatch(block_id) is None
+
+
+class DocxParser:
     """从 DOCX 的 OOXML 部件中提取正文结构和附加内容。"""
 
     max_xml_bytes: ClassVar[int] = 50 * 1024 * 1024  # 单个 XML 部件的读取上限。
@@ -105,17 +122,17 @@ class _DocxParser:
             return {}
 
         styles: dict[str, tuple[str, int | None]] = {}
-        for style in root.iter(_qualified_name("w:style")):
-            style_id = style.get(_qualified_name("w:styleId")) or ""
-            name_element = style.find("w:name", _NAMESPACES)
+        for style in root.iter(qualified_name("w:style")):
+            style_id = style.get(qualified_name("w:styleId")) or ""
+            name_element = style.find("w:name", NAMESPACES)
             style_name = (
-                name_element.get(_qualified_name("w:val"))
+                name_element.get(qualified_name("w:val"))
                 if name_element is not None
                 else style_id
             )
-            outline_element = style.find("w:pPr/w:outlineLvl", _NAMESPACES)
+            outline_element = style.find("w:pPr/w:outlineLvl", NAMESPACES)
             heading_level = (
-                int(outline_element.get(_qualified_name("w:val"), "0")) + 1
+                int(outline_element.get(qualified_name("w:val"), "0")) + 1
                 if outline_element is not None
                 else None
             )
@@ -128,7 +145,7 @@ class _DocxParser:
                 heading_level = int(match.group(1)) if match else None
 
             styles[style_id] = (style_name or style_id, heading_level)
-            numbering = style.find("w:pPr/w:numPr", _NAMESPACES)
+            numbering = style.find("w:pPr/w:numPr", NAMESPACES)
             if numbering is not None:
                 self._style_numbering[style_id] = numbering
         return styles
@@ -144,25 +161,25 @@ class _DocxParser:
             return {}
 
         abstract_numbering: dict[str, dict[str, str]] = {}
-        for abstract in root.iter(_qualified_name("w:abstractNum")):
-            abstract_id = abstract.get(_qualified_name("w:abstractNumId")) or ""
+        for abstract in root.iter(qualified_name("w:abstractNum")):
+            abstract_id = abstract.get(qualified_name("w:abstractNumId")) or ""
             levels: dict[str, str] = {}
-            for level in abstract.iter(_qualified_name("w:lvl")):
-                level_id = level.get(_qualified_name("w:ilvl")) or "0"
-                format_element = level.find("w:numFmt", _NAMESPACES)
+            for level in abstract.iter(qualified_name("w:lvl")):
+                level_id = level.get(qualified_name("w:ilvl")) or "0"
+                format_element = level.find("w:numFmt", NAMESPACES)
                 levels[level_id] = (
-                    format_element.get(_qualified_name("w:val"), "bullet")
+                    format_element.get(qualified_name("w:val"), "bullet")
                     if format_element is not None
                     else "bullet"
                 )
             abstract_numbering[abstract_id] = levels
 
         numbering: dict[str, dict[str, str]] = {}
-        for number in root.iter(_qualified_name("w:num")):
-            number_id = number.get(_qualified_name("w:numId")) or ""
-            abstract_reference = number.find("w:abstractNumId", _NAMESPACES)
+        for number in root.iter(qualified_name("w:num")):
+            number_id = number.get(qualified_name("w:numId")) or ""
+            abstract_reference = number.find("w:abstractNumId", NAMESPACES)
             if abstract_reference is not None:
-                abstract_id = abstract_reference.get(_qualified_name("w:val"), "")
+                abstract_id = abstract_reference.get(qualified_name("w:val"), "")
                 numbering[number_id] = abstract_numbering.get(abstract_id, {})
         return numbering
 
@@ -177,13 +194,13 @@ class _DocxParser:
             return {}
 
         comments: dict[str, dict[str, str]] = {}
-        for comment in root.iter(_qualified_name("w:comment")):
-            comment_id = comment.get(_qualified_name("w:id")) or ""
+        for comment in root.iter(qualified_name("w:comment")):
+            comment_id = comment.get(qualified_name("w:id")) or ""
             comments[comment_id] = {
                 "id": comment_id,
-                "author": comment.get(_qualified_name("w:author")) or "",
+                "author": comment.get(qualified_name("w:author")) or "",
                 "text": "".join(
-                    text.text or "" for text in comment.iter(_qualified_name("w:t"))
+                    text.text or "" for text in comment.iter(qualified_name("w:t"))
                 ),
             }
         return comments
@@ -206,7 +223,7 @@ class _DocxParser:
             in_deletion = "del" in ancestor_names
             in_insertion = "ins" in ancestor_names
 
-            if element.tag == _qualified_name("w:t"):
+            if element.tag == qualified_name("w:t"):
                 text = element.text or ""
                 if in_deletion:
                     if mode == "markup":
@@ -215,19 +232,19 @@ class _DocxParser:
                     parts.append(f"{{+{text}+}}")
                 else:
                     parts.append(text)
-            elif element.tag == _qualified_name("w:delText") and mode == "markup":
+            elif element.tag == qualified_name("w:delText") and mode == "markup":
                 parts.append(f"[-{element.text or ''}-]")
-            elif element.tag == _qualified_name("m:t"):
+            elif element.tag == qualified_name("m:t"):
                 parts.append(element.text or "")
-            elif element.tag == _qualified_name("w:tab"):
+            elif element.tag == qualified_name("w:tab"):
                 parts.append("\t")
             elif element.tag in {
-                _qualified_name("w:br"),
-                _qualified_name("w:cr"),
+                qualified_name("w:br"),
+                qualified_name("w:cr"),
             }:
                 parts.append("\n")
-            elif element.tag == _qualified_name("w:drawing") and not in_deletion:
-                drawing_properties = element.find(".//wp:docPr", _NAMESPACES)
+            elif element.tag == qualified_name("w:drawing") and not in_deletion:
+                drawing_properties = element.find(".//wp:docPr", NAMESPACES)
                 description = ""
                 if drawing_properties is not None:
                     description = (
@@ -236,12 +253,12 @@ class _DocxParser:
                         or ""
                     )
                 parts.append(f"[图片：{description}]" if description else "[图片]")
-            elif element.tag == _qualified_name("w:pict") and not in_deletion:
+            elif element.tag == qualified_name("w:pict") and not in_deletion:
                 parts.append("[图片]")
-            elif element.tag == _qualified_name("w:footnoteReference"):
-                parts.append(f"[脚注:{element.get(_qualified_name('w:id'), '')}]")
-            elif element.tag == _qualified_name("w:endnoteReference"):
-                parts.append(f"[尾注:{element.get(_qualified_name('w:id'), '')}]")
+            elif element.tag == qualified_name("w:footnoteReference"):
+                parts.append(f"[脚注:{element.get(qualified_name('w:id'), '')}]")
+            elif element.tag == qualified_name("w:endnoteReference"):
+                parts.append(f"[尾注:{element.get(qualified_name('w:id'), '')}]")
 
         return "".join(parts).replace("+}{+", "").replace("-][-", "")
 
@@ -264,7 +281,7 @@ class _DocxParser:
         paragraph: Any,
         xml_index: int,
         mode: str,
-    ) -> _DocumentBlock | None:
+    ) -> DocumentBlock | None:
         """将一个 Word 段落解析为可定位的内容块。
 
         Args:
@@ -277,17 +294,17 @@ class _DocxParser:
         """
         text = self._extract_text(paragraph, mode).strip()
         has_changes = (
-            paragraph.find(".//w:ins", _NAMESPACES) is not None
-            or paragraph.find(".//w:del", _NAMESPACES) is not None
+            paragraph.find(".//w:ins", NAMESPACES) is not None
+            or paragraph.find(".//w:del", NAMESPACES) is not None
         )
         comment_ids = list(
             dict.fromkeys(
-                marker.get(_qualified_name("w:id"), "")
+                marker.get(qualified_name("w:id"), "")
                 for marker in paragraph.iter()
                 if marker.tag
                 in {
-                    _qualified_name("w:commentRangeStart"),
-                    _qualified_name("w:commentReference"),
+                    qualified_name("w:commentRangeStart"),
+                    qualified_name("w:commentReference"),
                 }
             )
         )
@@ -299,18 +316,18 @@ class _DocxParser:
         if not text and not has_changes and not comments:
             return None
 
-        style_element = paragraph.find("w:pPr/w:pStyle", _NAMESPACES)
+        style_element = paragraph.find("w:pPr/w:pStyle", NAMESPACES)
         style_id = (
-            style_element.get(_qualified_name("w:val"), "")
+            style_element.get(qualified_name("w:val"), "")
             if style_element is not None
             else ""
         )
         style_name, heading_level = self.styles.get(style_id, (style_id, None))
-        outline_element = paragraph.find("w:pPr/w:outlineLvl", _NAMESPACES)
+        outline_element = paragraph.find("w:pPr/w:outlineLvl", NAMESPACES)
         if outline_element is not None:
-            heading_level = int(outline_element.get(_qualified_name("w:val"), "0")) + 1
+            heading_level = int(outline_element.get(qualified_name("w:val"), "0")) + 1
 
-        numbering = paragraph.find("w:pPr/w:numPr", _NAMESPACES)
+        numbering = paragraph.find("w:pPr/w:numPr", NAMESPACES)
         if numbering is None:
             numbering = self._style_numbering.get(style_id)
 
@@ -320,15 +337,15 @@ class _DocxParser:
             kind = "heading"
             level = heading_level
         elif numbering is not None:
-            level_element = numbering.find("w:ilvl", _NAMESPACES)
-            number_element = numbering.find("w:numId", _NAMESPACES)
+            level_element = numbering.find("w:ilvl", NAMESPACES)
+            number_element = numbering.find("w:numId", NAMESPACES)
             level = (
-                int(level_element.get(_qualified_name("w:val"), "0"))
+                int(level_element.get(qualified_name("w:val"), "0"))
                 if level_element is not None
                 else 0
             )
             number_id = (
-                number_element.get(_qualified_name("w:val"), "")
+                number_element.get(qualified_name("w:val"), "")
                 if number_element is not None
                 else ""
             )
@@ -338,10 +355,10 @@ class _DocxParser:
                 "ordered" if number_format not in {"bullet", "none"} else "bullet"
             )
 
-        para_id = paragraph.get(_qualified_name("w14:paraId")) or ""
+        para_id = paragraph.get(qualified_name("w14:paraId")) or ""
         preferred_id = f"p-{para_id.lower()}" if para_id else f"p-{xml_index}"
         block_id = self._claim_block_id(preferred_id, f"p-{xml_index}")
-        return _DocumentBlock(
+        return DocumentBlock(
             block_id=block_id,
             kind=kind,
             text=text,
@@ -358,7 +375,7 @@ class _DocxParser:
         table: Any,
         xml_index: int,
         mode: str,
-    ) -> _DocumentBlock | None:
+    ) -> DocumentBlock | None:
         """将 Word 表格解析为保持合并关系提示的 Markdown 表格。
 
         Args:
@@ -370,28 +387,28 @@ class _DocxParser:
             解析后的表格块；空表格返回 None。
         """
         rows: list[list[str]] = []
-        for table_row in table.findall("w:tr", _NAMESPACES):
+        for table_row in table.findall("w:tr", NAMESPACES):
             row: list[str] = []
-            for table_cell in table_row.findall("w:tc", _NAMESPACES):
-                span_element = table_cell.find("w:tcPr/w:gridSpan", _NAMESPACES)
+            for table_cell in table_row.findall("w:tc", NAMESPACES):
+                span_element = table_cell.find("w:tcPr/w:gridSpan", NAMESPACES)
                 column_span = (
-                    int(span_element.get(_qualified_name("w:val"), "1"))
+                    int(span_element.get(qualified_name("w:val"), "1"))
                     if span_element is not None
                     else 1
                 )
-                vertical_merge = table_cell.find("w:tcPr/w:vMerge", _NAMESPACES)
+                vertical_merge = table_cell.find("w:tcPr/w:vMerge", NAMESPACES)
                 cell_text = " <br> ".join(
                     filter(
                         None,
                         (
                             self._extract_text(paragraph, mode).strip()
-                            for paragraph in table_cell.findall(".//w:p", _NAMESPACES)
+                            for paragraph in table_cell.findall(".//w:p", NAMESPACES)
                         ),
                     )
                 )
                 if (
                     vertical_merge is not None
-                    and vertical_merge.get(_qualified_name("w:val")) != "restart"
+                    and vertical_merge.get(qualified_name("w:val")) != "restart"
                 ):
                     cell_text = "〃"
                 row.append(cell_text.replace("|", "\\|"))
@@ -412,10 +429,10 @@ class _DocxParser:
             "| " + " | ".join(row) + " |" for row in normalized_rows[1:]
         )
         has_changes = (
-            table.find(".//w:ins", _NAMESPACES) is not None
-            or table.find(".//w:del", _NAMESPACES) is not None
+            table.find(".//w:ins", NAMESPACES) is not None
+            or table.find(".//w:del", NAMESPACES) is not None
         )
-        return _DocumentBlock(
+        return DocumentBlock(
             block_id=self._claim_block_id(f"t-{xml_index}", f"t-{xml_index}"),
             kind="table",
             text="\n".join(markdown_lines),
@@ -423,7 +440,7 @@ class _DocxParser:
             has_changes=has_changes,
         )
 
-    def parse_blocks(self, mode: str) -> list[_DocumentBlock]:
+    def parse_blocks(self, mode: str) -> list[DocumentBlock]:
         """按正文原始顺序解析段落、表格和内容控件。
 
         Args:
@@ -435,14 +452,14 @@ class _DocxParser:
         Raises:
             ValueError: 正文 XML 缺少 body 节点。
         """
-        body = self.document.find("w:body", _NAMESPACES)
+        body = self.document.find("w:body", NAMESPACES)
         if body is None:
             raise ValueError("DOCX 正文缺少 body 节点")
 
-        blocks: list[_DocumentBlock] = []
+        blocks: list[DocumentBlock] = []
         for xml_index, element in enumerate(body):
             local_name = etree.QName(element).localname
-            block: _DocumentBlock | None = None
+            block: DocumentBlock | None = None
             if local_name == "p":
                 block = self._parse_paragraph(element, xml_index, mode)
             elif local_name == "tbl":
@@ -450,7 +467,7 @@ class _DocxParser:
             elif local_name == "sdt":
                 text = self._extract_text(element, mode).strip()
                 if text:
-                    block = _DocumentBlock(
+                    block = DocumentBlock(
                         block_id=self._claim_block_id(
                             f"content-{xml_index}", f"content-{xml_index}"
                         ),
@@ -485,7 +502,7 @@ class _DocxParser:
             if header_or_footer is not None:
                 texts = [
                     self._extract_text(paragraph, mode).strip()
-                    for paragraph in root.iter(_qualified_name("w:p"))
+                    for paragraph in root.iter(qualified_name("w:p"))
                 ]
                 text = "\n".join(filter(None, texts))
                 if text:
@@ -496,8 +513,8 @@ class _DocxParser:
             if note_part is None:
                 continue
             note_name = "footnote" if note_part.group(1) == "footnotes" else "endnote"
-            for note in root.iter(_qualified_name(f"w:{note_name}")):
-                note_id = note.get(_qualified_name("w:id"), "-1")
+            for note in root.iter(qualified_name(f"w:{note_name}")):
+                note_id = note.get(qualified_name("w:id"), "-1")
                 if int(note_id) < 0:
                     continue
                 text = self._extract_text(note, mode).strip()
@@ -517,15 +534,14 @@ class _DocxParser:
         warnings: list[str] = []
         if any(name.startswith("word/media/") for name in names):
             warnings.append("图片仅以位置占位符呈现，尚未识别图片视觉内容")
-        if self.document.find(".//w:altChunk", _NAMESPACES) is not None:
+        if self.document.find(".//w:altChunk", NAMESPACES) is not None:
             warnings.append("外部嵌入内容 altChunk 尚未解析")
         if (
-            self.document.find(".//w:moveFrom", _NAMESPACES) is not None
-            or self.document.find(".//w:moveTo", _NAMESPACES) is not None
+            self.document.find(".//w:moveFrom", NAMESPACES) is not None
+            or self.document.find(".//w:moveTo", NAMESPACES) is not None
         ):
             warnings.append("移动修订尚未单独标记")
-        if self.document.find(".//m:oMath", _NAMESPACES) is not None:
+        if self.document.find(".//m:oMath", NAMESPACES) is not None:
             warnings.append("公式当前只提取可见文本，尚未保留完整数学结构")
         # TODO: 后续补充文本框、图表、嵌入对象和关系引用的结构化索引。
         return warnings
-

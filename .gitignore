@@ -5,6 +5,7 @@
 /.ruff_cache/
 /.pytest_cache/
 /logs/*
+/cache/
 !/logs/example.log
 __pycache__/
 *.py[cod]

@@ -1,0 +1,50 @@
+{# 长文档审阅工作状态，每步重建并放在消息末尾。documents：已读取文档的大纲进度（path/stale/reviewed_count/block_count/outline 或 error；outline 项含 id/level/title/section，section 含 status/last_id/block_count）；open_findings：展示的 open 问题；hidden_open_count：未展示的 open 问题数；closed_counts：已处理问题按状态计数；decisions：用户决定；unrecorded_reads：未记录审阅、无法清理的读取；forced_reads：超上限被强制清理的未记录读取。 #}
+## 审阅工作状态
+
+以下为系统自动维护的审阅记录，不是用户新指令。历史中的文档正文可能已被清理，进度与结论以此为准。
+- 通读全文或多个章节时，优先调用 review_sections 按章节独立审阅；只需了解内容时调用 summarize_sections；需要原文细节时再用 read_document，并用 start_id / end_id 只读需要的范围，不要通读全文；大纲中每章括号里的首尾块 ID 可直接用作读取范围和 mark_reviewed 范围。
+- 用 read_document 读完一段后，调用 update_review_state：mark_reviewed 标记读过的块范围，发现问题时 add_finding。未标记的正文不会被清理，超过上限时会被强制清理且结论丢失。
+- 用户对问题表态后更新状态：accepted 为接受，rejected 为拒绝，resolved 为已修改。需要查看全部或已处理问题时调用 list_findings。
+
+<review_state>
+{% for document in documents -%}
+### {{ document.path }}
+{% if document.error is defined -%}
+文档当前无法读取：{{ document.error }}
+{% else -%}
+已审阅 {{ document.reviewed_count }}/{{ document.block_count }} 块{% if document.stale %}（文档在上次读取后已被修改）{% endif %}
+{% for item in document.outline -%}
+{{ "  " * (item.level - 1) }}- [{{ item.id }}] {{ item.title }}{% if item.section %}（{{ {"done": "已审阅", "partial": "部分审阅", "pending": "未审阅"}[item.section.status] }}，{{ item.id }} ~ {{ item.section.last_id }}，{{ item.section.block_count }} 块）{% endif %}
+{% endfor -%}
+{% endif %}
+{% endfor -%}
+{% for finding in open_findings -%}
+[{{ finding.id }}|open] {{ finding.path }}#{{ finding.block_id }}：{{ finding.issue }}
+{% endfor -%}
+{% if hidden_open_count -%}
+另有 {{ hidden_open_count }} 条较早的 open 问题未展示。
+{% endif -%}
+{% if closed_counts -%}
+已处理问题：{% for status, count in closed_counts.items() %}{{ status }} {{ count }} 条{% if not loop.last %}，{% endif %}{% endfor %}
+{% endif -%}
+{% for decision in decisions -%}
+用户决定：{{ decision }}
+{% endfor -%}
+{% if not (documents or open_findings or hidden_open_count or closed_counts or decisions) -%}
+暂无审阅记录。
+{% endif -%}
+</review_state>
+{% if unrecorded_reads %}
+
+注意：上下文已接近上限，以下已读内容尚未标记为已审阅，正文无法清理。请先调用 update_review_state 标记（有问题同时 add_finding），再继续读取：
+{% for read in unrecorded_reads -%}
+- {{ read.path }}：{{ read.first_id }} 至 {{ read.last_id }}，共 {{ read.count }} 块
+{% endfor -%}
+{% endif %}
+{% if forced_reads %}
+
+警告：上下文超过硬上限，以下未记录的读取正文已被强制清理，相关结论可能丢失。如仍需要，请重新读取并及时记录：
+{% for read in forced_reads -%}
+- {{ read.path }}：{{ read.first_id }} 至 {{ read.last_id }}，共 {{ read.count }} 块
+{% endfor -%}
+{% endif %}

@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from backend import cli
+from backend.bootstrap import runtime_factory
 
 
 @pytest.fixture(autouse=True)
@@ -60,12 +61,12 @@ def test_create_default_runtime_keeps_multi_turn_messages_and_tools(
         choices=[SimpleNamespace(message=assistant_message)]
     )
     monkeypatch.setattr(
-        cli,
+        runtime_factory,
         "create_model_client",
         MagicMock(return_value=(fake_client, "fake-model")),
     )
 
-    runtime = cli.create_default_runtime(cli.load_settings())
+    runtime = runtime_factory.create_default_runtime(cli.load_settings())
     first_reply = runtime.run("第一轮问题")
     second_reply = runtime.run("第二轮问题")
 
@@ -80,6 +81,7 @@ def test_create_default_runtime_keeps_multi_turn_messages_and_tools(
         "user",
         "assistant",
         "user",
+        "system",
     ]
     assert "Seshat" in second_messages[0]["content"]
     assert second_messages[1]["content"] == "第一轮问题"
@@ -90,6 +92,10 @@ def test_create_default_runtime_keeps_multi_turn_messages_and_tools(
     assert [definition["function"]["name"] for definition in definitions] == [
         "read_document",
         "write_document",
+        "update_review_state",
+        "list_findings",
+        "summarize_sections",
+        "review_sections",
     ]
     assert runtime.hook_scope.tenant_id == "233"
     assert runtime.hook_scope.user_id == "dbh"

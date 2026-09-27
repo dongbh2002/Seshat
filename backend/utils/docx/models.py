@@ -1,4 +1,4 @@
-"""定义 DOCX 读取结果使用的内部内容块模型。"""
+"""定义 DOCX 内容块模型，读取、修改和结构索引共用同一套块 ID。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 
 @dataclass
-class _DocumentBlock:
+class DocumentBlock:
     """保存一个可展示给模型并可供后续修改定位的文档块。"""
 
     block_id: str  # 模型引用内容块时使用的稳定 ID。
@@ -21,20 +21,17 @@ class _DocumentBlock:
     comments: list[dict[str, str]] = field(default_factory=list)  # 块关联的批注。
 
     def to_index(self) -> dict[str, Any]:
-        """生成不重复正文内容的轻量结构索引。
+        """生成返回给模型的轻量结构索引，只含正文中看不出的信息。
+
+        标题级别、列表类型和批注已体现在 Markdown 中，不再重复。
 
         Returns:
-            供后续修改工具定位 XML 节点的索引字典。
+            含 id、kind（块类型）与 has_changes（是否含修订）的字典。
         """
         return {
             "id": self.block_id,
             "kind": self.kind,
-            "level": self.level,
-            "style": self.style,
-            "para_id": self.para_id,
-            "xml_index": self.xml_index,
             "has_changes": self.has_changes,
-            "comment_count": len(self.comments),
         }
 
     def to_markdown(self) -> str:

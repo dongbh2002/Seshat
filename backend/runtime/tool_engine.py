@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any
 
-from backend.runtime.hook_engine import (
+from backend.hooks import (
     HookContext,
     HookEngine,
     HookEvent,

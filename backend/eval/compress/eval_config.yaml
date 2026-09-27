@@ -1,0 +1,13 @@
+# 本文件保存上下文压缩评估的参数；被测系统本身的配置仍读取 backend/config/application_local.yaml。
+document: backend/data_agent/tenant_packs/233/dbh/PE.docx  # 评估文档，运行时复制到临时目录，不修改原文件。
+usage_chars_per_token: 3.3  # 脚本化模型返回 usage 时的字符/token 比例（取自真实日志实测）。
+answer_chars: 400  # 脚本化模型每次最终回复的字符数。
+budgets: [8000, 16000, 32000]  # 评估的 working_tokens，用“文档相对预算的大小”模拟更长的论文。
+behaviors: [compliant, noncompliant]  # compliant：会标记审阅、记录问题与约束；noncompliant：从不记录。
+strategies:  # 参评策略：kind 为策略类型，overrides 按点号路径覆盖系统配置（用于消融）。
+  tiered: {kind: tiered}
+  tiered_no_retain: {kind: tiered, overrides: {context.compression.retain_recent_turn_reads: 0}}
+  clear_tool_results: {kind: clear_tool_results}
+  sliding_window: {kind: sliding_window}
+  no_compression: {kind: no_compression}
+output_dir: backend/eval/compress/results  # 报告输出目录（report.md 与 results.json）。

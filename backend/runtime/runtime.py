@@ -7,13 +7,13 @@ from collections.abc import Mapping
 from typing import Any
 from uuid import uuid4
 
-from backend.runtime.agent_loop import AgentLoop
-from backend.runtime.hook_engine import (
+from backend.hooks import (
     HookContext,
     HookEngine,
     HookEvent,
     HookScope,
 )
+from backend.runtime.agent_loop import AgentLoop
 
 
 class Runtime:
