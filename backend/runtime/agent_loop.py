@@ -206,6 +206,29 @@ class AgentLoop:
         self.messages.clear()
         self.context_engine.reset()
 
+    def export_state(self) -> dict[str, Any]:
+        """导出对话历史及上下文引擎的会话状态，供会话持久化。
+
+        Returns:
+            ``messages``：压缩后的已完成轮次消息；``context``：上下文引擎状态。
+        """
+        return {
+            "messages": copy.deepcopy(self.messages),
+            "context": self.context_engine.export_state(),
+        }
+
+    def restore_state(self, state: Mapping[str, Any]) -> None:
+        """用 ``export_state`` 的导出结果替换对话历史及上下文引擎的会话状态。
+
+        Args:
+            state: ``export_state`` 导出的字典。
+
+        Returns:
+            None。
+        """
+        self.messages = copy.deepcopy(list(state["messages"]))
+        self.context_engine.restore_state(state["context"])
+
     def _execute_tool(
         self,
         tool_call: Any,

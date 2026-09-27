@@ -111,7 +111,7 @@ class LoggingHook:
             "run_id": context.scope.run_id,
             "tenant_id": context.scope.tenant_id,
             "user_id": context.scope.user_id,
-            "session_name": context.scope.session_name,
+            "session_id": context.scope.session_id,
             "step": context.metadata.get("step"),
             "tool_call_id": context.metadata.get("tool_call_id"),
         }

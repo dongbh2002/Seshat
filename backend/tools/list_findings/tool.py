@@ -32,6 +32,13 @@ class ListFindingsTool(BaseTool):
         },
         "additionalProperties": False,
     }
+    returned_fields: ClassVar[tuple[str, ...]] = (  # 返回给模型的问题字段。
+        "id",
+        "path",
+        "block_id",
+        "issue",
+        "status",
+    )
 
     def __init__(self, store: ReviewStateStore) -> None:
         """初始化问题查询工具。
@@ -51,13 +58,14 @@ class ListFindingsTool(BaseTool):
             **arguments: 可选的 status 和 path。
 
         Returns:
-            含 findings（id、path、block_id、issue、status）的字典。
+            含 findings（id、path、block_id、issue、status）的字典；
+            原文片段 excerpt 只用于会话沉淀，不返回给模型。
         """
         status = arguments.get("status")
         path = arguments.get("path")
         return {
             "findings": [
-                finding
+                {key: finding[key] for key in self.returned_fields}
                 for finding in self.store.snapshot()["findings"]
                 if (status is None or finding["status"] == status)
                 and (path is None or finding["path"] == path)

@@ -1,4 +1,4 @@
-"""Seshat 终端多轮对话入口，只负责终端交互；组件装配见 backend/bootstrap.py。"""
+"""Seshat 终端多轮对话入口，只负责终端交互与会话命令；组件装配见 backend/bootstrap/。"""
 
 from __future__ import annotations
 
@@ -13,9 +13,14 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from backend.bootstrap import PROJECT_ROOT, create_default_runtime
+from backend.bootstrap import (
+    PROJECT_ROOT,
+    create_default_runtime,
+    create_session_manager,
+)
 from backend.config import load_settings
 from backend.logging import configure_logging, log_event
+from backend.session import SessionManager, SessionRecord
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -127,7 +132,7 @@ def _print_banner(
     model_name: str,
     tenant_id: str,
     user_id: str,
-    session_name: str,
+    session_id: str,
 ) -> None:
     """打印带 Seshat 像素标志和当前运行范围的启动横幅。
 
@@ -136,7 +141,7 @@ def _print_banner(
         model_name: 当前启用的模型配置名称。
         tenant_id: 当前默认租户标识。
         user_id: 当前默认用户标识。
-        session_name: 当前默认会话名称。
+        session_id: 启动时新开的会话 ID。
 
     Returns:
         None。
@@ -153,7 +158,7 @@ def _print_banner(
     details.add_column(style="#79c0ff")
     details.add_row("MODEL", model_name)
     details.add_row("WORKSPACE", f"{tenant_id} / {user_id}")
-    details.add_row("SESSION", session_name)
+    details.add_row("SESSION", session_id)
 
     status = Text()
     status.append("  ", style="on #1688f8")
@@ -193,9 +198,72 @@ def _print_help() -> None:
         None。
     """
     print("可用命令：")
-    print("  /help   查看命令")
-    print("  /reset  清空当前进程内的对话历史")
-    print("  /exit   退出程序")
+    print("  /help                查看命令")
+    print("  /new                 新开会话（当前会话已自动保存）")
+    print("  /sessions            列出已保存的会话")
+    print("  /resume <序号或ID>   恢复会话，序号见 /sessions")
+    print("  /exit                退出程序")
+
+
+def _print_sessions(
+    console: Console,
+    records: list[SessionRecord],
+    current_id: str,
+) -> None:
+    """以表格列出已保存的会话，当前会话在序号后标记 *。
+
+    Args:
+        console: 用于渲染表格的 Rich Console。
+        records: 按最后保存时间从新到旧排序的会话记录。
+        current_id: 当前会话 ID。
+
+    Returns:
+        None。
+    """
+    if not records:
+        print("暂无已保存的会话。")
+        return
+    table = Table(box=box.SIMPLE, pad_edge=False)
+    table.add_column("#", justify="right", style="dim", no_wrap=True)
+    table.add_column("ID", style="#79c0ff", no_wrap=True)
+    table.add_column("更新时间", no_wrap=True)
+    table.add_column("轮数", justify="right", no_wrap=True)
+    table.add_column("标题", no_wrap=True, overflow="ellipsis")
+    for index, record in enumerate(records, start=1):
+        table.add_row(
+            f"{index}{'*' if record.id == current_id else ''}",
+            record.id,
+            datetime.fromisoformat(record.updated_at).strftime("%m-%d %H:%M"),
+            str(record.turn_count),
+            record.title,
+        )
+    console.print(table)
+
+
+def _resume_session(sessions: SessionManager, argument: str) -> SessionRecord:
+    """按 /sessions 中的序号或会话 ID 恢复会话。
+
+    Args:
+        sessions: 会话管理器。
+        argument: 用户输入的序号或会话 ID。
+
+    Returns:
+        恢复后的当前会话记录。
+
+    Raises:
+        ValueError: 未提供参数、序号越界、ID 无效或状态无法恢复。
+        FileNotFoundError: 会话不存在。
+    """
+    if not argument:
+        raise ValueError("请指定序号或会话 ID，例如 /resume 1")
+    session_id = argument
+    if argument.isdigit():
+        records = sessions.list_sessions()
+        index = int(argument)
+        if not 1 <= index <= len(records):
+            raise ValueError(f"序号超出范围: {argument}（共 {len(records)} 个会话）")
+        session_id = records[index - 1].id
+    return sessions.resume(session_id)
 
 
 def _read_user_input(console: Console) -> str:
@@ -306,6 +374,7 @@ def main() -> int:
     try:
         identity = settings.default_identity
         runtime = create_default_runtime(settings)
+        sessions = create_session_manager(settings, runtime)
     except Exception as error:  # noqa: BLE001 - CLI 边界需要展示所有启动错误。
         log_event(
             _LOGGER,
@@ -328,7 +397,7 @@ def main() -> int:
             "model": runtime.agent_loop.model,
             "tenant_id": identity.tenant_id,
             "user_id": identity.user_id,
-            "session_name": identity.session_name,
+            "session_id": sessions.current.id,
             "tools": [
                 definition.get("function", {}).get("name") for definition in definitions
             ],
@@ -341,7 +410,7 @@ def main() -> int:
         settings.current_model,
         identity.tenant_id,
         identity.user_id,
-        identity.session_name,
+        sessions.current.id,
     )
 
     while True:
@@ -358,7 +427,9 @@ def main() -> int:
 
         if not user_input:
             continue
-        command = user_input.lower()
+        command, _, argument = user_input.partition(" ")
+        command = command.lower()
+        argument = argument.strip()
         if command in {"/exit", "/quit"}:
             log_event(
                 _LOGGER,
@@ -367,17 +438,39 @@ def main() -> int:
             )
             print("会话已结束。")
             return 0
-        if command == "/reset":
-            runtime.agent_loop.reset()
-            log_event(_LOGGER, "conversation_reset", {})
-            print("对话历史已清空。")
+        if command == "/new":
+            record = sessions.start_new()
+            log_event(_LOGGER, "session_started", {"session_id": record.id})
+            print(f"已新开会话 {record.id}。")
+            continue
+        if command == "/sessions":
+            _print_sessions(console, sessions.list_sessions(), sessions.current.id)
+            continue
+        if command == "/resume":
+            try:
+                record = _resume_session(sessions, argument)
+            except (OSError, ValueError) as error:
+                print(f"恢复失败：{error}", file=sys.stderr)
+                continue
+            log_event(_LOGGER, "session_resumed", {"session_id": record.id})
+            print(f"已恢复会话 {record.id}（{record.turn_count} 轮）：{record.title}")
             continue
         if command == "/help":
             _print_help()
             continue
+        if command.startswith("/"):
+            print(f"未知命令：{command}，输入 /help 查看命令。")
+            continue
 
         try:
             reply = runtime.run(user_input)
+        except KeyboardInterrupt:
+            # TODO: 中断时仍在线程池中执行的工具不会被终止，可能在下一轮开始后才写入结果。
+            print(
+                "\n已中断本轮：本轮对话不保留，已产生的审阅记录与文档修改会保留。",
+                file=sys.stderr,
+            )
+            continue
         except Exception as error:  # noqa: BLE001 - 单轮失败不应结束 CLI 会话。
             print(f"运行失败：{error}", file=sys.stderr)
             continue

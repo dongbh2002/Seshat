@@ -144,7 +144,7 @@ class UpdateReviewStateTool(BaseTool):
                 self._require_text(operation, "start_id"),
                 self._require_text(operation, "end_id"),
             )
-            self.store.mark_reviewed(snapshot.path, block_ids)
+            self.store.mark_reviewed(snapshot.path, snapshot.get_block_texts(block_ids))
             return {"op": op, "marked_count": len(block_ids)}
         if op == "add_finding":
             snapshot = self.document_index.load(self._require_text(operation, "path"))
@@ -155,6 +155,7 @@ class UpdateReviewStateTool(BaseTool):
                 snapshot.path,
                 block_id,
                 self._require_text(operation, "issue"),
+                excerpt=snapshot.get_block_text(block_id),
             )
             return {"op": op, "finding_id": finding_id}
         if op == "set_status":

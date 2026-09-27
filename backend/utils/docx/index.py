@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
@@ -42,6 +43,42 @@ class DocumentSnapshot:
     headings: tuple[DocumentHeading, ...]  # 全部标题组成的大纲。
     sections: tuple[DocumentSection, ...]  # 按文档顺序排列的章节。
     block_ids: tuple[str, ...]  # 按文档顺序排列的全部内容块 ID。
+    block_texts: tuple[str, ...]  # 与 block_ids 一一对应的块正文（接受修订视图）。
+
+    def get_block_text(self, block_id: str) -> str:
+        """按 ID 查找内容块正文。
+
+        Args:
+            block_id: 内容块 ID。
+
+        Returns:
+            该块在接受修订视图下的正文。
+
+        Raises:
+            ValueError: 内容块 ID 不存在。
+        """
+        try:
+            return self.block_texts[self.block_ids.index(block_id)]
+        except ValueError as error:
+            raise ValueError(f"内容块 ID 不存在: {block_id}") from error
+
+    def get_block_texts(self, block_ids: Iterable[str]) -> dict[str, str]:
+        """按 ID 批量查找内容块正文。
+
+        Args:
+            block_ids: 内容块 ID。
+
+        Returns:
+            块 ID 到其接受修订视图正文的映射，保持传入顺序。
+
+        Raises:
+            ValueError: 内容块 ID 不存在。
+        """
+        texts = dict(zip(self.block_ids, self.block_texts))
+        try:
+            return {block_id: texts[block_id] for block_id in block_ids}
+        except KeyError as error:
+            raise ValueError(f"内容块 ID 不存在: {error.args[0]}") from error
 
     def get_section(self, section_id: str) -> DocumentSection:
         """按 ID 查找章节。
@@ -146,6 +183,7 @@ class DocumentIndex:
             ),
             sections=self._split_sections(blocks),
             block_ids=tuple(block.block_id for block in blocks),
+            block_texts=tuple(block.text for block in blocks),
         )
         self._snapshots[relative_path] = snapshot
         return snapshot

@@ -118,9 +118,12 @@ class ReviewSectionsTool(SectionTool):
                         snapshot.path,
                         finding["block_id"],
                         finding["issue"],
+                        excerpt=snapshot.get_block_text(finding["block_id"]),
                     )
                 )
-            self.store.mark_reviewed(snapshot.path, section.block_ids)
+            self.store.mark_reviewed(
+                snapshot.path, snapshot.get_block_texts(section.block_ids)
+            )
             entry["finding_ids"] = finding_ids
             results.append(entry)
         # TODO: 章节较多时改为并发调用。

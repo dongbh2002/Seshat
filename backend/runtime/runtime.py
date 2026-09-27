@@ -1,9 +1,10 @@
-"""Runtime 顶层入口，处理运行范围和 Agent 调用生命周期。"""
+"""Runtime 顶层入口，处理运行范围和 Agent 调用生命周期，并对外提供会话状态的清空、导出与恢复。"""
 
 from __future__ import annotations
 
 import copy
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 from uuid import uuid4
 
@@ -87,7 +88,8 @@ class Runtime:
                 result=result,
             )
             return result
-        except Exception as error:
+        # 用户中断同样触发 RUNTIME_ERROR，保证会话保存等 Hook 在本轮被打断时仍执行。
+        except (Exception, KeyboardInterrupt) as error:
             try:
                 self._emit_hook(
                     HookEvent.RUNTIME_ERROR,
@@ -99,6 +101,44 @@ class Runtime:
             except Exception as hook_error:
                 raise hook_error from error
             raise
+
+    def bind_session(self, session_id: str) -> None:
+        """把后续运行归属到指定会话，Hook 与日志中的 session_id 随之改变。
+
+        Args:
+            session_id: 会话 ID。
+
+        Returns:
+            None。
+        """
+        self.hook_scope = replace(self.hook_scope, session_id=session_id)
+
+    def reset(self) -> None:
+        """清空全部会话状态：对话历史、历史归档与审阅状态。
+
+        Returns:
+            None。
+        """
+        self.agent_loop.reset()
+
+    def export_state(self) -> dict[str, Any]:
+        """导出全部会话状态，供会话持久化。
+
+        Returns:
+            AgentLoop.export_state 的结果，可 JSON 序列化。
+        """
+        return self.agent_loop.export_state()
+
+    def restore_state(self, state: Mapping[str, Any]) -> None:
+        """用 ``export_state`` 的导出结果替换全部会话状态。
+
+        Args:
+            state: ``export_state`` 导出的字典。
+
+        Returns:
+            None。
+        """
+        self.agent_loop.restore_state(state)
 
     def _emit_hook(
         self,

@@ -68,7 +68,7 @@ class ReviewStateContext:
             documents.append(
                 self._build_document_view(
                     snapshot,
-                    read_revision=document["revision"],
+                    seen_revision=document["seen_revision"],
                     reviewed=set(document["reviewed_block_ids"]),
                 )
             )
@@ -97,6 +97,25 @@ class ReviewStateContext:
             forced_reads=list(forced_reads),
         )
 
+    def sync_documents(self) -> None:
+        """按磁盘当前内容同步已登记文档：登记会话外修改，撤销内容已变化块的已审阅标记。
+
+        当前无法读取的文档跳过，渲染时会提示错误。
+
+        Returns:
+            None。
+        """
+        for path in self.store.tracked_paths():
+            try:
+                snapshot = self.document_index.load(path)
+            except (OSError, ValueError):
+                continue
+            self.store.sync_document(
+                path,
+                snapshot.revision,
+                snapshot.get_block_texts(snapshot.block_ids),
+            )
+
     def reset(self) -> None:
         """清空审阅状态。
 
@@ -105,11 +124,34 @@ class ReviewStateContext:
         """
         self.store.clear()
 
+    def export_state(self) -> dict[str, Any]:
+        """导出审阅状态，供会话持久化。
+
+        Returns:
+            ReviewStateStore.export_state 的结果。
+        """
+        return self.store.export_state()
+
+    def restore_state(self, state: Mapping[str, Any]) -> None:
+        """恢复审阅状态，并立即与磁盘上的文档同步。
+
+        会话中断期间文档可能在会话外被修改（如 Word）；同步后历史中的旧读取
+        会被判为过时并由压缩清理，内容已变化的块不再算已审阅。
+
+        Args:
+            state: ``export_state`` 导出的字典。
+
+        Returns:
+            None。
+        """
+        self.store.restore_state(state)
+        self.sync_documents()
+
     def _build_document_view(
         self,
         snapshot: DocumentSnapshot,
         *,
-        read_revision: str,
+        seen_revision: str,
         reviewed: set[str],
     ) -> dict[str, Any]:
         """把文档结构和已审阅块合成为模板使用的大纲进度视图。
@@ -118,7 +160,7 @@ class ReviewStateContext:
 
         Args:
             snapshot: 文档当前结构索引。
-            read_revision: 最近一次读取时的 revision。
+            seen_revision: 模型最后读取或自行修改后得到的 revision。
             reviewed: 已审阅内容块 ID 集合。
 
         Returns:
@@ -165,7 +207,7 @@ class ReviewStateContext:
         )
         return {
             "path": snapshot.path,
-            "stale": snapshot.revision != read_revision,
+            "stale": snapshot.revision != seen_revision,
             "reviewed_count": sum(
                 block_id in reviewed for block_id in snapshot.block_ids
             ),

@@ -1,4 +1,4 @@
-"""默认 Runtime 装配：按配置创建共享组件、注册工具与 Hook，返回可运行的 Runtime。"""
+"""默认 Runtime 装配：按配置创建共享组件、注册工具与 Hook，返回可运行的 Runtime；并为其装配会话管理器。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from backend.bootstrap.paths import PROJECT_ROOT, TENANT_PACKS_ROOT
+from backend.bootstrap.paths import TENANT_PACKS_ROOT, resolve_project_path
 from backend.config import Settings
 from backend.hooks import HookEngine, HookScope
 from backend.llm_tasks import SectionReviewer, SectionSummarizer
@@ -20,7 +20,12 @@ from backend.runtime.context import (
     TokenCalibrationHook,
     TokenEstimator,
 )
-from backend.session import ReviewStateHook, ReviewStateStore
+from backend.session import (
+    ReviewStateHook,
+    ReviewStateStore,
+    SessionManager,
+    SessionRepository,
+)
 from backend.templating import PROMPT_DIRECTORY, PromptRenderer
 from backend.tools import (
     ListFindingsTool,
@@ -112,17 +117,12 @@ def create_runtime(
             settings.active_model.context_window_tokens - budget.output_reserve_tokens
         ),
     )
-    summary_cache_path = Path(documents.summary_cache_path)
     summarizer = SectionSummarizer(
         client,
         model,
         request_options,
         renderer,
-        cache_path=(
-            summary_cache_path
-            if summary_cache_path.is_absolute()
-            else PROJECT_ROOT / summary_cache_path
-        ),
+        cache_path=resolve_project_path(documents.summary_cache_path),
         max_chars=documents.summary_max_chars,
     )
     reviewer = SectionReviewer(client, model, request_options, renderer)
@@ -154,6 +154,28 @@ def create_runtime(
         hook_scope=HookScope(
             tenant_id=identity.tenant_id,
             user_id=identity.user_id,
-            session_name=identity.session_name,
         ),
     )
+
+
+def create_session_manager(settings: Settings, runtime: Runtime) -> SessionManager:
+    """为 Runtime 装配会话管理器：新开会话，并注册每轮结束后的自动保存。
+
+    评估等不需要落盘的入口只调用 create_runtime，不调用本函数。
+
+    Args:
+        settings: 类型化项目配置，提供会话根目录与默认身份。
+        runtime: 刚创建、尚无会话状态的 Runtime。
+
+    Returns:
+        已绑定当前会话的会话管理器。
+    """
+    identity = settings.default_identity
+    directory = (
+        resolve_project_path(settings.sessions.root)
+        / identity.tenant_id
+        / identity.user_id
+    )
+    manager = SessionManager(runtime, SessionRepository(directory))
+    manager.register(runtime.hook_engine)
+    return manager

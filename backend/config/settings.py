@@ -11,19 +11,24 @@ _ALLOWED_LOG_LEVELS = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"}
 
 @dataclass(frozen=True)
 class TenantSettings:
-    """单个租户的默认用户与会话配置。"""
+    """单个租户的默认用户配置。"""
 
     default_user: str  # 租户下默认使用的用户标识。
-    session_name: str  # 默认会话名称。
 
 
 @dataclass(frozen=True)
 class IdentitySettings:
-    """已经解析完成的默认租户、用户和会话身份。"""
+    """已经解析完成的默认租户和用户身份。"""
 
     tenant_id: str  # 默认租户标识。
     user_id: str  # 默认用户标识。
-    session_name: str  # 默认会话名称。
+
+
+@dataclass(frozen=True)
+class SessionSettings:
+    """会话持久化配置。"""
+
+    root: str  # 会话文件根目录，相对项目根目录或绝对路径；其下按租户/用户分层。
 
 
 @dataclass(frozen=True)
@@ -113,6 +118,7 @@ class Settings:
 
     default_tenant: str  # 默认租户标识。
     tenants: dict[str, TenantSettings]  # 以租户标识索引的租户配置。
+    sessions: SessionSettings  # 会话持久化配置。
     agent_loop: AgentLoopSettings  # Agent 循环配置。
     context: ContextSettings  # 上下文组装与压缩配置。
     documents: DocumentSettings  # 文档结构索引与章节子任务配置。
@@ -122,7 +128,7 @@ class Settings:
 
     @property
     def default_identity(self) -> IdentitySettings:
-        """返回默认租户对应的用户和会话身份。
+        """返回默认租户对应的用户身份。
 
         Returns:
             已解析完成的默认身份配置。
@@ -131,7 +137,6 @@ class Settings:
         return IdentitySettings(
             tenant_id=self.default_tenant,
             user_id=tenant.default_user,
-            session_name=tenant.session_name,
         )
 
     @property
@@ -165,6 +170,11 @@ def parse_settings(data: Mapping[str, Any]) -> Settings:
     }
     if default_tenant not in tenants:
         raise ValueError(f"default_tenant 未在 tenants 中定义: {default_tenant}")
+
+    sessions_data = _require_mapping(data.get("sessions"), "sessions")
+    sessions = SessionSettings(
+        root=_require_string(sessions_data.get("root"), "sessions.root"),
+    )
 
     agent_loop_data = _require_mapping(data.get("agent_loop"), "agent_loop")
     agent_loop = AgentLoopSettings(
@@ -329,6 +339,7 @@ def parse_settings(data: Mapping[str, Any]) -> Settings:
     return Settings(
         default_tenant=default_tenant,
         tenants=tenants,
+        sessions=sessions,
         agent_loop=agent_loop,
         context=ContextSettings(
             budget=budget,
@@ -357,10 +368,6 @@ def _parse_tenant_settings(tenant_id: str, value: Any) -> TenantSettings:
         default_user=_require_string(
             tenant.get("default_user"),
             f"tenants.{tenant_id}.default_user",
-        ),
-        session_name=_require_string(
-            tenant.get("session_name"),
-            f"tenants.{tenant_id}.session_name",
         ),
     )
 

@@ -11,6 +11,7 @@ from backend.config.settings import (
     LoggingSettings,
     ModelSettings,
     ReviewStateSettings,
+    SessionSettings,
     Settings,
     TenantSettings,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "LoggingSettings",
     "ModelSettings",
     "ReviewStateSettings",
+    "SessionSettings",
     "Settings",
     "TenantSettings",
     "load_config",

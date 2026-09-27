@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -81,6 +82,9 @@ class ContextEngine:
     ) -> ContextBuild:
         """组合指令、历史摘要、保留的历史、当前轮次和末尾的审阅工作状态。
 
+        组装前先把审阅状态与磁盘上的文档同步，使会话外修改在本步的压缩与
+        审阅状态中立即生效。
+
         Args:
             history: 已完成轮次的消息（上一步压缩后的结果），不含 system 消息。
             active_turn: 当前用户输入及本轮产生的模型和工具消息。
@@ -92,6 +96,7 @@ class ContextEngine:
         Raises:
             ContextOverflowError: 压缩后仍超出模型物理上限。
         """
+        self.review_state_context.sync_documents()
         base_instruction = self._merge_instruction_contexts(
             self.system_prompt,
             self._get_profile_context(),
@@ -163,6 +168,29 @@ class ContextEngine:
         """
         self.review_state_context.reset()
         self.archive = HistoryArchive.empty()
+
+    def export_state(self) -> dict[str, Any]:
+        """导出上下文引擎持有的会话状态，供会话持久化。
+
+        Returns:
+            ``archive``：历史归档的字段字典；``review_state``：审阅状态。
+        """
+        return {
+            "archive": asdict(self.archive),
+            "review_state": self.review_state_context.export_state(),
+        }
+
+    def restore_state(self, state: Mapping[str, Any]) -> None:
+        """用 ``export_state`` 的导出结果替换会话状态。
+
+        Args:
+            state: ``export_state`` 导出的字典。
+
+        Returns:
+            None。
+        """
+        self.archive = HistoryArchive(**copy.deepcopy(dict(state["archive"])))
+        self.review_state_context.restore_state(state["review_state"])
 
     def _get_profile_context(self) -> str:
         """获取当前服务对象的研究与写作画像上下文。
