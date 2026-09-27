@@ -7,7 +7,11 @@ from pathlib import Path
 from openai import OpenAI
 
 from backend.bootstrap.identity import Identity
-from backend.bootstrap.paths import TENANT_PACKS_ROOT, resolve_project_path
+from backend.bootstrap.paths import (
+    resolve_project_path,
+    session_directory,
+    workspace_directory,
+)
 from backend.config import Settings
 from backend.hooks import HookEngine, HookScope
 from backend.llm_tasks import SectionReviewer, SectionSummarizer
@@ -42,20 +46,20 @@ from backend.utils.docx import DocumentIndex
 def create_default_runtime(settings: Settings, identity: Identity) -> Runtime:
     """为启动身份创建注册好文档工具、章节子任务和 Hook 的 Runtime。
 
-    身份对应的文档工作目录不存在时直接创建。
+    身份对应的工作区目录不存在时直接创建。
 
     Args:
         settings: 入口加载一次并注入各组件的类型化项目配置。
-        identity: 启动身份，决定文档工作目录与运行范围。
+        identity: 启动身份，决定工作区目录与运行范围。
 
     Returns:
         可持续调用 ``run`` 进行进程内多轮对话的 Runtime。
 
     Raises:
-        OSError: 文档工作目录创建失败。
+        OSError: 工作区目录创建失败。
         KeyError: 模型环境变量缺失。
     """
-    document_root = TENANT_PACKS_ROOT / identity.tenant_id / identity.user_id
+    document_root = workspace_directory(settings, identity)
     document_root.mkdir(parents=True, exist_ok=True)
 
     client, model = create_model_client(settings=settings)
@@ -172,18 +176,14 @@ def create_session_manager(
     评估等不需要落盘的入口只调用 create_runtime，不调用本函数。
 
     Args:
-        settings: 类型化项目配置，提供会话根目录。
+        settings: 类型化项目配置，提供数据根目录。
         identity: 启动身份，决定会话文件所在目录。
         runtime: 刚创建、尚无会话状态的 Runtime。
 
     Returns:
         已绑定当前会话的会话管理器。
     """
-    directory = (
-        resolve_project_path(settings.sessions.root)
-        / identity.tenant_id
-        / identity.user_id
-    )
-    manager = SessionManager(runtime, SessionRepository(directory))
+    repository = SessionRepository(session_directory(settings, identity))
+    manager = SessionManager(runtime, repository)
     manager.register(runtime.hook_engine)
     return manager

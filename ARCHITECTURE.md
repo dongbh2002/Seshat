@@ -16,6 +16,13 @@ Seshat/
 │   └── example.log                   日志格式示例（运行日志不提交）
 ├── cache/
 │   └── section_summaries.json        运行时生成的章节摘要缓存（不提交）
+├── data/                             运行时数据根目录（yaml data.root），除两份 README 外不提交
+│   ├── workspaces/
+│   │   ├── README.md                 工作区说明
+│   │   └── <tenant_id>/<user_id>/    用户工作区：待处理文档与修改产出，工具只能访问这里；启动时不存在则创建
+│   └── sessions/
+│       ├── README.md                 会话文件说明：数据流、示例与每个字段的含义
+│       └── <tenant_id>/<user_id>/    会话文件 <session_id>.json
 │
 ├── docs/
 │   ├── 01-工具体系总览.md            工具基类、执行流程、工具清单
@@ -26,6 +33,7 @@ Seshat/
 │   └── 06-上下文压缩机制.md          上下文压缩
 │
 ├── tests/
+│   ├── fixtures/PE.docx              测试与评估共用的示例论文
 │   ├── test_cli.py                   默认装配与 CLI 多轮命令
 │   ├── test_llm.py                   真实模型连通性
 │   ├── test_read_document.py         打印并校验 DOCX 读取结果
@@ -38,7 +46,7 @@ Seshat/
     │
     ├── bootstrap/                    装配：解析启动身份，按配置创建并组装各组件，供 CLI 等入口使用
     │   ├── identity.py               Identity、resolve_identity：启动参数解析为租户/用户身份，都不传时生成带时间码的游客用户；校验名字并统一小写
-    │   ├── paths.py                  PROJECT_ROOT、TENANT_PACKS_ROOT 等路径常量；resolve_project_path：配置路径按项目根目录解析
+    │   ├── paths.py                  PROJECT_ROOT；resolve_project_path：配置路径按项目根目录解析；workspace_directory、session_directory：数据根目录下各用户的工作区与会话目录
     │   ├── runtime_factory.py        create_default_runtime：按身份准备文档目录（不存在则创建）与模型客户端；create_runtime：用给定身份、目录与客户端创建共享组件、注册工具与 Hook（评估复用）；create_session_manager：按身份为 Runtime 装配会话管理器（评估不调用）
     │   └── __init__.py               导出装配函数与路径常量
     │
@@ -54,7 +62,7 @@ Seshat/
     │       └── results/              运行生成：report.md（表格与指标定义）、results.json（逐步明细）
     │
     ├── config/
-    │   ├── application_local.yaml    唯一配置来源：游客身份、会话文件目录、模型（含窗口大小）、token 预算与压缩比例、审阅状态上限、文档参数、日志
+    │   ├── application_local.yaml    唯一配置来源：游客身份、数据根目录、模型（含窗口大小）、token 预算与压缩比例、审阅状态上限、文档参数、日志
     │   ├── settings.py               类型化 Settings dataclass 与字段校验
     │   ├── config.py                 读取 YAML 并构造 Settings
     │   └── __init__.py               导出配置类和加载函数
@@ -140,7 +148,5 @@ Seshat/
     │   ├── review_sections/tool.py   工具 review_sections：按章节 map-reduce 审阅
     │   └── */__init__.py             导出对应工具类
     │
-    ├── data_agent/tenant_packs/<tenant_id>/<user_id>/   用户文档工作目录，工具只能访问这里；启动时不存在则创建
-    ├── data_agent/sessions/<tenant_id>/<user_id>/       会话文件 <session_id>.json，运行时生成（不提交）
     └── skills/                       预留空目录，未被代码引用
 ```
