@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, ClassVar, Protocol
 
-from backend.hooks import HookContext, HookEngine, HookEvent
+from backend.hooks import HookContext, HookEngine, HookEvent, HookScope
 from backend.session.repository import SessionRecord, SessionRepository
 
 
@@ -48,7 +48,10 @@ class SessionStateful(Protocol):
 
 
 class SessionManager:
-    """维护当前会话；注册为 Hook 后每轮结束自动保存，失败的轮次同样保存已产生的审阅状态。"""
+    """维护当前会话；注册为 Hook 后每轮结束自动保存，失败的轮次同样保存已产生的审阅状态。
+
+    离开会话（新开、恢复其他会话、关闭）前触发 SESSION_END，供记忆提炼等收尾处理。
+    """
 
     save_events: ClassVar[tuple[HookEvent, ...]] = (  # 触发保存的生命周期事件。
         HookEvent.AFTER_RUNTIME,
@@ -68,17 +71,19 @@ class SessionManager:
         self.runtime = runtime  # 会话状态的实际持有者。
         self.repository = repository  # 会话文件读写。
         self.current = repository.create()  # 当前会话记录。
+        self.hook_engine: HookEngine | None = None  # 注册后用于触发 SESSION_END。
         runtime.bind_session(self.current.id)
 
     def register(self, hook_engine: HookEngine) -> None:
         """注册到运行结束事件；保存失败不影响本轮回复。
 
         Args:
-            hook_engine: Runtime 使用的 HookEngine。
+            hook_engine: Runtime 使用的 HookEngine，也用于触发 SESSION_END。
 
         Returns:
             None。
         """
+        self.hook_engine = hook_engine
         for event in self.save_events:
             hook_engine.register(event, self, critical=False)
 
@@ -108,7 +113,6 @@ class SessionManager:
             OSError: 文件写入失败。
         """
         # TODO: 两个进程打开同一会话会互相覆盖，需要文件锁；保存失败目前只记日志，CLI 不提示。
-        # TODO: 压缩会丢弃早期原文，记忆沉淀若需要完整对话，另存只追加的原始对话记录。
         self.current.state = self.runtime.export_state()
         self.repository.save(self.current)
 
@@ -118,6 +122,7 @@ class SessionManager:
         Returns:
             新会话记录。
         """
+        self._end_current()
         self.runtime.reset()
         self.current = self.repository.create()
         self.runtime.bind_session(self.current.id)
@@ -138,6 +143,7 @@ class SessionManager:
         """
         # TODO: 恢复后回显最近几轮对话；换模型后旧消息格式的兼容性尚未校验。
         record = self.repository.load(session_id)
+        self._end_current()
         try:
             self.runtime.restore_state(record.state)
         except (AttributeError, KeyError, TypeError, ValueError) as error:
@@ -148,6 +154,28 @@ class SessionManager:
         self.current = record
         self.runtime.bind_session(record.id)
         return record
+
+    def close(self) -> None:
+        """结束当前会话（程序退出时调用），触发 SESSION_END；会话状态已在每轮结束时保存。
+
+        Returns:
+            None。
+        """
+        self._end_current()
+
+    def _end_current(self) -> None:
+        """触发离开当前会话的 SESSION_END 事件；未注册时不触发。
+
+        Returns:
+            None。
+        """
+        if self.hook_engine is not None:
+            self.hook_engine.emit(
+                HookContext(
+                    event=HookEvent.SESSION_END,
+                    scope=HookScope(session_id=self.current.id),
+                )
+            )
 
     def list_sessions(self) -> list[SessionRecord]:
         """列出已保存的会话。

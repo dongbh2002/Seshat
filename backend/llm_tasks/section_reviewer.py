@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from backend.llm_tasks.base import LLMTask
 
@@ -16,6 +16,7 @@ class SectionReviewer(LLMTask):
         *,
         focus: str,
         decisions: Sequence[str],
+        memory: Sequence[Mapping[str, str]],
     ) -> list[dict[str, str]]:
         """审阅一个章节。
 
@@ -23,6 +24,7 @@ class SectionReviewer(LLMTask):
             markdown: 章节 Markdown，每个内容块带 [ID] 标记。
             focus: 本次审阅要求。
             decisions: 用户已确认的审阅决定。
+            memory: 长期记忆中的要求（level、content），按优先级排列；未启用记忆时为空。
 
         Returns:
             ``{"block_id", "issue"}`` 列表；格式不合法的条目被丢弃。
@@ -30,11 +32,11 @@ class SectionReviewer(LLMTask):
         Raises:
             ValueError: 模型未返回 JSON 对象。
         """
-        # TODO: 画像与记忆接入后，一并传入子任务提示词以体现导师风格。
         system_prompt = self.renderer.render(
             "section_review_prompt.j2",
             focus=focus,
             decisions=list(decisions),
+            memory=list(memory),
         )
         findings = self._request_json(system_prompt, markdown).get("findings")
         if not isinstance(findings, list):

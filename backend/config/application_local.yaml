@@ -8,6 +8,8 @@ identity:
 # 运行时数据根目录：其下 workspaces/<租户>/<用户>/ 存放待处理文档，sessions/<租户>/<用户>/ 存放会话文件。
 data:
   root: data
+  lock_timeout_seconds: 10
+  lock_stale_seconds: 60
 
 agent_loop:
   max_steps: 12
@@ -38,6 +40,51 @@ documents:
   summary_max_chars: 300
   read_default_max_chars: 10000
   read_max_chars: 30000
+  revision_author: Seshat AI
+
+# 修改信号采集（游客不采集）：读到的新文档与历史版本按内容相似度匹配，确认后比较两版。
+signals:
+  match_threshold: 0.5
+  max_candidates: 3
+  block_match_threshold: 0.5
+
+# 四级记忆（游客不启用）：每轮结束后由记忆 agent 决定写入文档、用户、课题组（导师要求）级；
+# 会话结束时提炼课题组共性（多名学生）与通用候选（多个课题组），通用级须人工审核后生效；
+# 会话结束时维护：长期未被支持的用户级、课题组级记忆转为休眠，条目较多时由模型整理本会话变动的条目，
+# 再把已下线、已晋升、长期休眠与超出容量的条目移入归档（永久保留，可恢复）。
+memory:
+  dialogue_max_chars: 2000
+  extract_max_chars: 12000
+  signal_excerpt_chars: 300
+  item_max_chars: 120
+  agent_existing_max_items: 30
+  privacy_min_run_chars: 15
+  history_max_entries: 5
+  # 依据按来源计分：导师信号 2 分，学生（含本轮对话中的用户表述）、其他人、身份不明各 1 分。
+  evidence_weights:
+    advisor: 2
+    student: 1
+    other: 1
+    unknown: 1
+  turn_support_cap: 3
+  promote_tenant_min_users: 2
+  promote_global_min_tenants: 2
+  user_half_life_days: 180
+  tenant_half_life_days: 365
+  dormant_score: 0.5
+  # 治理：已下线、已晋升与得分低于 archive_score 的休眠条目移入归档；主文件超出容量时归档低分条目。
+  archive_score: 0.1
+  document_capacity: 50
+  user_capacity: 100
+  tenant_capacity: 200
+  consolidate_min_items: 10
+  consolidate_max_items: 60
+  consolidate_neighbors: 5
+  fresh_slots: 3
+  document_max_items: 15
+  user_max_items: 15
+  tenant_max_items: 20
+  global_max_items: 20
 
 logging:
   level: INFO

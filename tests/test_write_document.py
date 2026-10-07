@@ -129,7 +129,7 @@ def test_write_document_direct_operations_to_new_file(tmp_path: Path) -> None:
     reader = ReadDocumentTool(
         tmp_path, default_max_chars=20_000, max_chars_limit=100_000
     )
-    writer = WriteDocumentTool(tmp_path)
+    writer = WriteDocumentTool(tmp_path, default_author="Seshat AI")
     source_before = reader.execute(path=source_path.name, max_chars=100_000)
     target_id = _find_block_id(source_before["markdown"], "Preparation of Articles")
 
@@ -184,7 +184,7 @@ def test_write_document_tracked_replace_can_be_read_back(tmp_path: Path) -> None
     reader = ReadDocumentTool(
         tmp_path, default_max_chars=20_000, max_chars_limit=100_000
     )
-    writer = WriteDocumentTool(tmp_path)
+    writer = WriteDocumentTool(tmp_path, default_author="Seshat AI")
     before = reader.execute(path=document_path.name, max_chars=100_000)
     target_id = _find_block_id(before["markdown"], "Preparation of Articles")
 
@@ -234,7 +234,7 @@ def test_write_document_delete_removes_target_block(tmp_path: Path) -> None:
     reader = ReadDocumentTool(
         tmp_path, default_max_chars=20_000, max_chars_limit=100_000
     )
-    writer = WriteDocumentTool(tmp_path)
+    writer = WriteDocumentTool(tmp_path, default_author="Seshat AI")
     before = reader.execute(path=document_path.name, max_chars=100_000)
     target_text = "Preparation of Articles for IEEE TRANSACTIONS and JOURNALS"
     target_id = _find_block_id(before["markdown"], target_text)
@@ -264,7 +264,7 @@ def test_write_document_set_cell_updates_table_text(tmp_path: Path) -> None:
     reader = ReadDocumentTool(
         tmp_path, default_max_chars=20_000, max_chars_limit=100_000
     )
-    writer = WriteDocumentTool(tmp_path)
+    writer = WriteDocumentTool(tmp_path, default_author="Seshat AI")
     before = reader.execute(path=document_path.name, max_chars=100_000)
     table_id = next(
         block["id"] for block in before["index"] if block["kind"] == "table"
@@ -306,7 +306,7 @@ def test_write_document_rejects_stale_revision_without_changing_file(
     reader = ReadDocumentTool(
         tmp_path, default_max_chars=20_000, max_chars_limit=100_000
     )
-    writer = WriteDocumentTool(tmp_path)
+    writer = WriteDocumentTool(tmp_path, default_author="Seshat AI")
     before = reader.execute(path=document_path.name, max_chars=100_000)
     target_id = _find_block_id(before["markdown"], "Preparation of Articles")
     original_bytes = document_path.read_bytes()

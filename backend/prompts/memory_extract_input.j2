@@ -1,0 +1,43 @@
+{# 记忆 agent 的用户消息。dialogue：本轮对话（user_input/reply/tool_calls，tool_calls 项含 name/arguments），会话结束时处理遗留信号为 None；signals：本轮新信号（label/source/role/paper/section/before/after/comment/suggestion/outcome，paper 为文档编号或空）；excerpt_chars：每段修改或原文的字符上限；dialogue_chars：用户输入与回复各自的字符上限。修改以 [-删除-]{+插入+} 标记。 #}
+{% set roles = {"advisor": "导师", "student": "学生", "other": "其他人", "unknown": "身份不明"} -%}
+{% set outcomes = {"accepted": "被接受", "rejected": "被拒绝", "resolved": "已按问题修改", "rewritten": "被改写为第三种写法"} -%}
+## 本轮对话（证据编号 T）
+{% if dialogue -%}
+- 用户：{{ dialogue.user_input | oneline | truncate_middle(dialogue_chars) }}
+- Seshat：{{ dialogue.reply | oneline | truncate_middle(dialogue_chars) }}
+{% for call in dialogue.tool_calls -%}
+- 工具 {{ call.name }}：{{ call.arguments | oneline | truncate_middle(excerpt_chars) }}
+{% endfor -%}
+{% else -%}
+- 无（会话结束，只处理遗留的修改信号）
+{% endif %}
+## 本轮新产生的修改信号
+修改以 [-删除-]{+插入+} 标记。
+{% for signal in signals %}
+[{{ signal.label }}]{% if signal.paper %} 文档 {{ signal.paper }}{% endif %}{% if signal.section %}｜{{ signal.section }}{% endif %}
+{% if signal.source == "tracked_revision" -%}
+- {{ roles[signal.role] }}的修订：{{ signal.before | inline_diff(signal.after, 30) | truncate_middle(excerpt_chars) }}
+{% elif signal.source == "untracked_edit" -%}
+- {{ roles[signal.role] }}未开修订的直接修改：{{ signal.before | inline_diff(signal.after, 30) | truncate_middle(excerpt_chars) }}
+{% elif signal.source == "comment" -%}
+- {{ roles[signal.role] }}的批注：{{ signal.comment | oneline | truncate_middle(excerpt_chars) }}
+- 批注所在原文：{{ signal.before | oneline | truncate_middle(excerpt_chars) }}
+{% elif signal.source == "assistant_revision" -%}
+- Seshat 的修改建议{{ outcomes[signal.outcome] }}（处理人：{{ roles[signal.role] }}）
+- Seshat 建议：{{ signal.before | inline_diff(signal.suggestion, 30) | truncate_middle(excerpt_chars) }}
+{% if signal.outcome == "rewritten" -%}
+- 最终改为：{{ signal.before | inline_diff(signal.after, 30) | truncate_middle(excerpt_chars) }}
+{% endif -%}
+{% elif signal.source == "finding_outcome" -%}
+- Seshat 指出的问题{{ outcomes[signal.outcome] }}（处理人：{{ roles[signal.role] }}）：{{ signal.comment | oneline | truncate_middle(excerpt_chars) }}
+{% if signal.after -%}
+- 修改：{{ signal.before | inline_diff(signal.after, 30) | truncate_middle(excerpt_chars) }}
+{% else -%}
+- 所在原文：{{ signal.before | oneline | truncate_middle(excerpt_chars) }}
+{% endif -%}
+{% elif signal.source == "decision" -%}
+- {{ roles[signal.role] }}在对话中的决定：{{ signal.comment | oneline | truncate_middle(excerpt_chars) }}
+{% endif -%}
+{% else %}
+无
+{% endfor %}

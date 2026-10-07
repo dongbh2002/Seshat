@@ -22,6 +22,8 @@ class DataSettings:
     """运行时数据目录配置。"""
 
     root: str  # 数据根目录，相对项目根目录或绝对路径；子目录布局见 bootstrap/paths.py。
+    lock_timeout_seconds: float  # 等待共享文件锁（课题组、通用数据）的最长秒数。
+    lock_stale_seconds: float  # 锁文件超过该秒数未释放时视为残留并清除。
 
 
 @dataclass(frozen=True)
@@ -82,6 +84,48 @@ class DocumentSettings:
     summary_max_chars: int  # 单个章节摘要的字符上限。
     read_default_max_chars: int  # read_document 未指定 max_chars 时的单次字符上限。
     read_max_chars: int  # read_document 允许指定的 max_chars 最大值。
+    revision_author: str  # 修订与批注的默认作者，信号采集据此识别 Seshat 的修订。
+
+
+@dataclass(frozen=True)
+class SignalSettings:
+    """修改信号采集配置：历史版本匹配与两版比较的阈值。"""
+
+    match_threshold: float  # 与历史版本内容相似度达到该值时列为疑似新版本。
+    max_candidates: int  # 待确认时最多列出的疑似历史版本数。
+    block_match_threshold: float  # 未按 ID 或原文对齐的块，相似度达到该值视为被改写。
+
+
+@dataclass(frozen=True)
+class MemorySettings:
+    """四级记忆配置：记忆 agent 的输入上限、会话结束时的晋升门槛与注入上下文的条目上限。"""
+
+    dialogue_max_chars: int  # 交给记忆 agent 的本轮用户输入与回复各自的字符上限。
+    extract_max_chars: int  # 单次交给记忆 agent 的信号字符上限，超出分批。
+    signal_excerpt_chars: int  # 每条信号展示给记忆 agent 的修改片段字符上限。
+    item_max_chars: int  # 单条记忆内容的字符上限。
+    agent_existing_max_items: int  # 每个归属交给记忆 agent 的现有记忆条数上限。
+    privacy_min_run_chars: int  # 用户级、课题组级内容与原文连续相同的拒写字数。
+    history_max_entries: int  # 每条记忆保留的修改历史条数。
+    evidence_weights: dict[str, int]  # 依据来源角色到分值，支持数与反例数按此累加。
+    turn_support_cap: int  # 同一轮（一次记忆 agent 处理）中一条记忆最多增加的支持分。
+    promote_tenant_min_users: int  # 同一规则出现在课题组内几名学生中时晋升到课题组级。
+    promote_global_min_tenants: int  # 同一规则出现在几个课题组时列为通用候选。
+    user_half_life_days: int  # 用户级记忆得分减半的天数（距最近一次被支持）。
+    tenant_half_life_days: int  # 课题组级记忆得分减半的天数（距最近一次被支持）。
+    dormant_score: float  # 得分低于该值的用户级、课题组级记忆转为休眠。
+    archive_score: float  # 休眠条目得分低于该值时移入归档，须小于 dormant_score。
+    document_capacity: int  # 每篇文档主文件保留的生效与休眠条目上限。
+    user_capacity: int  # 用户级主文件保留的生效与休眠条目上限。
+    tenant_capacity: int  # 课题组级主文件保留的生效与休眠条目上限。
+    consolidate_min_items: int  # 会话结束时归属内条目达到该数量才由模型整理。
+    consolidate_max_items: int  # 单次整理交给模型的条目上限（变动条目与相似条目各半）。
+    consolidate_neighbors: int  # 整理时为每条变动条目附带的最相似条目数。
+    fresh_slots: int  # 各级注入上限中留给最近新增条目的名额。
+    document_max_items: int  # 每篇文档注入上下文的记忆条数上限。
+    user_max_items: int  # 用户级注入上下文的记忆条数上限。
+    tenant_max_items: int  # 课题组级注入上下文的记忆条数上限。
+    global_max_items: int  # 通用级注入上下文的记忆条数上限。
 
 
 @dataclass(frozen=True)
@@ -114,6 +158,8 @@ class Settings:
     agent_loop: AgentLoopSettings  # Agent 循环配置。
     context: ContextSettings  # 上下文组装与压缩配置。
     documents: DocumentSettings  # 文档结构索引与章节子任务配置。
+    signals: SignalSettings  # 修改信号采集配置。
+    memory: MemorySettings  # 四级记忆配置。
     logging: LoggingSettings  # 本地文件日志配置。
     current_model: str  # 当前启用的模型配置名称。
     models: dict[str, ModelSettings]  # 以配置名称索引的模型配置。
@@ -156,6 +202,14 @@ def parse_settings(data: Mapping[str, Any]) -> Settings:
     data_section = _require_mapping(data.get("data"), "data")
     data_settings = DataSettings(
         root=_require_string(data_section.get("root"), "data.root"),
+        lock_timeout_seconds=_require_positive_number(
+            data_section.get("lock_timeout_seconds"),
+            "data.lock_timeout_seconds",
+        ),
+        lock_stale_seconds=_require_positive_number(
+            data_section.get("lock_stale_seconds"),
+            "data.lock_stale_seconds",
+        ),
     )
 
     agent_loop_data = _require_mapping(data.get("agent_loop"), "agent_loop")
@@ -282,9 +336,61 @@ def parse_settings(data: Mapping[str, Any]) -> Settings:
             documents_data.get("read_max_chars"),
             "documents.read_max_chars",
         ),
+        revision_author=_require_string(
+            documents_data.get("revision_author"),
+            "documents.revision_author",
+        ),
     )
     if documents.read_default_max_chars > documents.read_max_chars:
         raise ValueError("documents.read_default_max_chars 不能大于 read_max_chars")
+
+    signals_data = _require_mapping(data.get("signals"), "signals")
+    signals = SignalSettings(
+        match_threshold=_require_ratio(
+            signals_data.get("match_threshold"),
+            "signals.match_threshold",
+        ),
+        max_candidates=_require_positive_int(
+            signals_data.get("max_candidates"),
+            "signals.max_candidates",
+        ),
+        block_match_threshold=_require_ratio(
+            signals_data.get("block_match_threshold"),
+            "signals.block_match_threshold",
+        ),
+    )
+
+    memory_data = _require_mapping(data.get("memory"), "memory")
+    weights_data = _require_mapping(
+        memory_data.get("evidence_weights"), "memory.evidence_weights"
+    )
+    memory = MemorySettings(
+        **{
+            name: (
+                _require_positive_number(memory_data.get(name), f"memory.{name}")
+                if name in {"dormant_score", "archive_score"}
+                else _require_positive_int(memory_data.get(name), f"memory.{name}")
+            )
+            for name in MemorySettings.__dataclass_fields__
+            if name != "evidence_weights"
+        },
+        evidence_weights={
+            str(role): _require_positive_int(weight, f"memory.evidence_weights.{role}")
+            for role, weight in weights_data.items()
+        },
+    )
+    if memory.fresh_slots >= min(
+        memory.document_max_items,
+        memory.user_max_items,
+        memory.tenant_max_items,
+        memory.global_max_items,
+    ):
+        raise ValueError("memory.fresh_slots 必须小于各级注入条数上限")
+    if memory.archive_score >= memory.dormant_score:
+        raise ValueError("memory.archive_score 必须小于 dormant_score")
+    for level in ("document", "user", "tenant"):
+        if getattr(memory, f"{level}_capacity") < getattr(memory, f"{level}_max_items"):
+            raise ValueError(f"memory.{level}_capacity 不能小于 {level}_max_items")
 
     logging_data = _require_mapping(data.get("logging"), "logging")
     level = _require_string(logging_data.get("level"), "logging.level").upper()
@@ -328,6 +434,8 @@ def parse_settings(data: Mapping[str, Any]) -> Settings:
             review_state=review_state,
         ),
         documents=documents,
+        signals=signals,
+        memory=memory,
         logging=logging_settings,
         current_model=current_model,
         models=models,

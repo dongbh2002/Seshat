@@ -9,6 +9,9 @@ from backend.bootstrap.paths import (
 )
 from backend.bootstrap.runtime_factory import (
     create_default_runtime,
+    create_memory_curator,
+    create_memory_maintenance,
+    create_memory_promotion,
     create_runtime,
     create_session_manager,
 )
@@ -17,6 +20,9 @@ __all__ = [
     "PROJECT_ROOT",
     "Identity",
     "create_default_runtime",
+    "create_memory_curator",
+    "create_memory_maintenance",
+    "create_memory_promotion",
     "create_runtime",
     "create_session_manager",
     "resolve_identity",

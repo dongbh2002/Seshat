@@ -1,0 +1,7 @@
+{# 记忆整理子任务的用户消息。level：被整理的级别；items：生效与休眠条目（id/kind/source/support/against/last_supported/dormant/content，source 为 agent 或 promoted，support/against 为支持分与反例分，last_supported 为最近支持日期）。 #}
+{% set kinds = {"rule": "规则", "fact": "事实"} -%}
+{% set sources = {"agent": "导师要求", "promoted": "课题组共性"} -%}
+## 待整理的记忆
+{% for item in items -%}
+- [{{ item.id }}|{{ kinds[item.kind] }}{% if level == "tenant" %}|{{ sources[item.source] }}{% endif %}|支持 {{ item.support }}{% if item.against %}|反例 {{ item.against }}{% endif %}|最近支持 {{ item.last_supported }}{% if item.dormant %}|休眠{% endif %}] {{ item.content }}
+{% endfor %}

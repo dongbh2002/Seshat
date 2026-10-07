@@ -17,8 +17,9 @@ _NAME_PATTERN = re.compile(r"[\w-]+")
 class Identity:
     """一次启动使用的租户与用户身份。"""
 
-    tenant_id: str  # 租户标识，通常对应课题组。
-    user_id: str  # 用户标识。
+    tenant_id: str  # 租户标识，对应课题组。
+    user_id: str  # 用户标识，对应课题组内的学生。
+    is_guest: bool = False  # 是否为未指定身份启动的游客；游客不采集修改信号。
 
 
 def resolve_identity(
@@ -40,15 +41,39 @@ def resolve_identity(
         ValueError: 只提供了其中一个，或名字含不允许的字符。
     """
     if tenant_id is None and user_id is None:
-        # TODO: 记忆沉淀接入后排除游客数据；游客工作区与会话随启动次数累积，需要清理机制。
+        # TODO: 游客工作区与会话随启动次数累积，需要清理机制。
         guest = settings.identity
-        tenant_id = guest.guest_tenant
-        user_id = f"{guest.guest_user_prefix}-{new_time_id(datetime.now())}"
-    elif tenant_id is None or user_id is None:
+        return Identity(
+            tenant_id=_validate_name("租户", guest.guest_tenant),
+            user_id=_validate_name(
+                "用户", f"{guest.guest_user_prefix}-{new_time_id(datetime.now())}"
+            ),
+            is_guest=True,
+        )
+    if tenant_id is None or user_id is None:
         raise ValueError("租户与用户须同时提供；都不提供时以游客身份启动")
 
-    for label, name in (("租户", tenant_id), ("用户", user_id)):
-        if not _NAME_PATTERN.fullmatch(name):
-            raise ValueError(f"{label}名只能包含字母、数字、中文、_ 和 -: {name!r}")
-    # 名字会拼进路径，而 Windows 路径不区分大小写；统一小写，保证一个目录只对应一个身份。
-    return Identity(tenant_id=tenant_id.lower(), user_id=user_id.lower())
+    return Identity(
+        tenant_id=_validate_name("租户", tenant_id),
+        user_id=_validate_name("用户", user_id),
+    )
+
+
+def _validate_name(label: str, name: str) -> str:
+    """校验租户名或用户名并统一为小写。
+
+    名字会拼进路径，而 Windows 路径不区分大小写；统一小写，保证一个目录只对应一个身份。
+
+    Args:
+        label: 用于错误信息的名称类别（租户或用户）。
+        name: 待校验的名字。
+
+    Returns:
+        小写后的名字。
+
+    Raises:
+        ValueError: 名字含不允许的字符。
+    """
+    if not _NAME_PATTERN.fullmatch(name):
+        raise ValueError(f"{label}名只能包含字母、数字、中文、_ 和 -: {name!r}")
+    return name.lower()

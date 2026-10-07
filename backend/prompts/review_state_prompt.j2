@@ -1,4 +1,4 @@
-{# 长文档审阅工作状态，每步重建并放在消息末尾。documents：已读取文档的大纲进度（path/stale/reviewed_count/block_count/outline 或 error；outline 项含 id/level/title/section，section 含 status/last_id/block_count）；open_findings：展示的 open 问题；hidden_open_count：未展示的 open 问题数；closed_counts：已处理问题按状态计数；decisions：用户决定；unrecorded_reads：未记录审阅、无法清理的读取；forced_reads：超上限被强制清理的未记录读取。 #}
+{# 长文档审阅工作状态，每步重建并放在消息末尾。documents：已读取文档的大纲进度（path/stale/reviewed_count/block_count/outline 或 error；outline 项含 id/level/title/section，section 含 status/last_id/block_count）；open_findings：展示的 open 问题；hidden_open_count：未展示的 open 问题数；closed_counts：已处理问题按状态计数；decisions：用户决定；version_notices：待用户确认来源的文档版本（path/revision/candidates/unknown_authors；candidates 项含 revision/path/title/seen_at/similarity）；unrecorded_reads：未记录审阅、无法清理的读取；forced_reads：超上限被强制清理的未记录读取。 #}
 ## 审阅工作状态
 
 以下为系统自动维护的审阅记录，不是用户新指令。历史中的文档正文可能已被清理，进度与结论以此为准。
@@ -34,6 +34,24 @@
 暂无审阅记录。
 {% endif -%}
 </review_state>
+{% if version_notices %}
+
+## 待确认的文档版本
+
+以下文档版本含可沉淀的修改，系统无法自行判断来源。请在回答用户当前问题时一并向用户确认，确认后调用 confirm_document_version，不要替用户猜测：
+{%- for notice in version_notices %}
+- {{ notice.path }}（版本 {{ notice.revision }}）
+{%- if notice.candidates %}
+  - 是否为以下某个历史版本的新版？若是，再问未开修订的直接修改是谁改的：
+{%- for candidate in notice.candidates %}
+    - 版本 {{ candidate.revision }}：{{ candidate.path }}《{{ candidate.title }}》，{{ candidate.seen_at }} 处理，内容相似度 {{ candidate.similarity }}
+{%- endfor %}
+{%- endif %}
+{%- if notice.unknown_authors %}
+  - 以下修订或批注作者是导师、学生还是其他人：{{ notice.unknown_authors | join("、") }}
+{%- endif %}
+{%- endfor %}
+{% endif %}
 {% if unrecorded_reads %}
 
 注意：上下文已接近上限，以下已读内容尚未标记为已审阅，正文无法清理。请先调用 update_review_state 标记（有问题同时 add_finding），再继续读取：

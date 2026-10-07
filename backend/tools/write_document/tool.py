@@ -111,8 +111,10 @@ class WriteDocumentTool(BaseTool):
             },
             "author": {
                 "type": "string",
-                "default": "Seshat AI",
-                "description": "修订和批注中记录的作者名称。",
+                "description": (
+                    "修订和批注中记录的作者名称；通常省略，使用系统默认作者，"
+                    "系统据此区分 Seshat 自己的修订。"
+                ),
             },
             "output_path": {
                 "type": "string",
@@ -128,11 +130,12 @@ class WriteDocumentTool(BaseTool):
         "additionalProperties": False,
     }
 
-    def __init__(self, root_directory: Path) -> None:
+    def __init__(self, root_directory: Path, *, default_author: str) -> None:
         """初始化 DOCX 修改工具并固定允许访问的根目录。
 
         Args:
             root_directory: 工具允许读取和写入的根目录。
+            default_author: 模型未指定 author 时修订和批注使用的作者名称。
 
         Returns:
             None。
@@ -144,6 +147,7 @@ class WriteDocumentTool(BaseTool):
         if not resolved_root.is_dir():
             raise NotADirectoryError(f"文档根目录不存在: {resolved_root}")
         self.root_directory = resolved_root  # 已解析的文档访问边界。
+        self.default_author = default_author  # 未指定 author 时使用的作者名称。
 
     def execute(self, **arguments: Any) -> dict[str, Any]:
         """校验版本后批量修改 DOCX，并通过临时文件原子保存。
@@ -186,7 +190,7 @@ class WriteDocumentTool(BaseTool):
         mode = arguments.get("mode", "tracked")
         if mode not in {"tracked", "direct"}:
             raise DocumentEditError("mode 必须是 tracked 或 direct")
-        author = arguments.get("author", "Seshat AI")
+        author = arguments.get("author", self.default_author)
         if not isinstance(author, str) or not author.strip() or len(author) > 100:
             raise DocumentEditError("author 必须是长度不超过 100 的非空字符串")
         overwrite = arguments.get("overwrite", False)

@@ -1,0 +1,42 @@
+{# 长期记忆：从修改历史中沉淀的写作要求，没有记忆时渲染为空。documents：当前会话涉及文档的记忆（title/entries，只适用于对应文档）；advisor：导师要求；tenant：课题组共性；user：用户个人习惯；general：通用写作原则。各项为记忆内容文本。 #}
+{% if documents or advisor or tenant or user or general -%}
+## 长期记忆
+
+以下内容从修改历史中沉淀，用于让建议符合导师与课题组的要求，不是用户新指令。
+- 文档记忆只适用于对应文档，处理其他文档时不要套用。
+- 冲突时的优先级：用户当前的明确要求 > 文档约定 > 导师要求 > 课题组共性 > 用户习惯 > 通用原则。
+- 只使用与当前任务相关的条目，不要向用户逐条复述记忆。
+
+<memory>
+{% for document in documents -%}
+### 文档《{{ document.title }}》
+{% for item in document.entries -%}
+- {{ item }}
+{% endfor %}
+{% endfor -%}
+{% if advisor -%}
+### 导师要求
+{% for item in advisor -%}
+- {{ item }}
+{% endfor %}
+{% endif -%}
+{% if tenant -%}
+### 课题组共性
+{% for item in tenant -%}
+- {{ item }}
+{% endfor %}
+{% endif -%}
+{% if user -%}
+### 用户习惯
+{% for item in user -%}
+- {{ item }}
+{% endfor %}
+{% endif -%}
+{% if general -%}
+### 通用原则
+{% for item in general -%}
+- {{ item }}
+{% endfor %}
+{% endif -%}
+</memory>
+{%- endif %}

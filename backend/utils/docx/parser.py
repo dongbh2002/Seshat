@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 from typing import Any, ClassVar
 from zipfile import ZipFile
 
@@ -23,6 +24,7 @@ NAMESPACES = {
     "wp": _DRAWING_NAMESPACE,
     "m": _MATH_NAMESPACE,
 }
+TEXT_MODES = ("accepted", "rejected", "markup")  # 修订视图：接受、拒绝、标记。
 
 
 def qualified_name(tag: str) -> str:
@@ -36,6 +38,26 @@ def qualified_name(tag: str) -> str:
     """
     prefix, local_name = tag.split(":", maxsplit=1)
     return f"{{{NAMESPACES[prefix]}}}{local_name}"
+
+
+_REVISION_NAMES = frozenset({"ins", "del"})  # 包裹内容的修订节点本地名称。
+_TEXT_TAGS = frozenset(  # 直接输出元素文本的标签。
+    qualified_name(tag) for tag in ("w:t", "w:delText", "m:t")
+)
+_BREAK_TAGS = frozenset(qualified_name(tag) for tag in ("w:br", "w:cr"))  # 换行标签。
+_DRAWING_TAGS = frozenset(  # 图片标签。
+    qualified_name(tag) for tag in ("w:drawing", "w:pict")
+)
+_CONTENT_TAGS = (  # 提取文本时需要处理的全部内容标签。
+    _TEXT_TAGS
+    | _BREAK_TAGS
+    | _DRAWING_TAGS
+    | {
+        qualified_name("w:tab"),
+        qualified_name("w:footnoteReference"),
+        qualified_name("w:endnoteReference"),
+    }
+)
 
 
 def is_position_based_block_id(block_id: str) -> bool:
@@ -199,68 +221,137 @@ class DocxParser:
             comments[comment_id] = {
                 "id": comment_id,
                 "author": comment.get(qualified_name("w:author")) or "",
+                "date": comment.get(qualified_name("w:date")) or "",
                 "text": "".join(
                     text.text or "" for text in comment.iter(qualified_name("w:t"))
                 ),
             }
         return comments
 
-    def _extract_text(self, node: Any, mode: str) -> str:
+    def _extract_text(
+        self,
+        node: Any,
+        mode: str,
+        accepted_authors: Collection[str] | None = None,
+    ) -> str:
         """提取 XML 节点文本，并按指定模式呈现修订和特殊元素。
 
         Args:
             node: 需要提取文本的 OOXML 节点。
-            mode: ``accepted`` 或 ``markup`` 修订视图。
+            mode: 修订视图，取值见 ``parse_blocks``。
+            accepted_authors: 只接受这些作者的修订，取值见 ``parse_blocks``。
 
         Returns:
             合并后的文本、修订标记和图片或注释引用占位符。
         """
         parts: list[str] = []
         for element in node.iter():
-            ancestor_names = {
-                etree.QName(ancestor).localname for ancestor in element.iterancestors()
-            }
-            in_deletion = "del" in ancestor_names
-            in_insertion = "ins" in ancestor_names
-
-            if element.tag == qualified_name("w:t"):
-                text = element.text or ""
-                if in_deletion:
-                    if mode == "markup":
-                        parts.append(f"[-{text}-]")
-                elif in_insertion and mode == "markup":
-                    parts.append(f"{{+{text}+}}")
-                else:
-                    parts.append(text)
-            elif element.tag == qualified_name("w:delText") and mode == "markup":
-                parts.append(f"[-{element.text or ''}-]")
-            elif element.tag == qualified_name("m:t"):
-                parts.append(element.text or "")
-            elif element.tag == qualified_name("w:tab"):
-                parts.append("\t")
-            elif element.tag in {
-                qualified_name("w:br"),
-                qualified_name("w:cr"),
-            }:
-                parts.append("\n")
-            elif element.tag == qualified_name("w:drawing") and not in_deletion:
-                drawing_properties = element.find(".//wp:docPr", NAMESPACES)
-                description = ""
-                if drawing_properties is not None:
-                    description = (
-                        drawing_properties.get("descr")
-                        or drawing_properties.get("name")
-                        or ""
-                    )
-                parts.append(f"[图片：{description}]" if description else "[图片]")
-            elif element.tag == qualified_name("w:pict") and not in_deletion:
-                parts.append("[图片]")
-            elif element.tag == qualified_name("w:footnoteReference"):
-                parts.append(f"[脚注:{element.get(qualified_name('w:id'), '')}]")
-            elif element.tag == qualified_name("w:endnoteReference"):
-                parts.append(f"[尾注:{element.get(qualified_name('w:id'), '')}]")
+            if element.tag not in _CONTENT_TAGS:
+                continue
+            revisions = [
+                (
+                    etree.QName(ancestor).localname,
+                    ancestor.get(qualified_name("w:author")) or "",
+                )
+                for ancestor in element.iterancestors()
+                if etree.QName(ancestor).localname in _REVISION_NAMES
+            ]
+            if mode == "markup":
+                in_deletion = any(kind == "del" for kind, _ in revisions)
+                in_insertion = any(kind == "ins" for kind, _ in revisions)
+                if element.tag == qualified_name("w:delText") or (
+                    element.tag == qualified_name("w:t") and in_deletion
+                ):
+                    parts.append(f"[-{element.text or ''}-]")
+                    continue
+                if element.tag == qualified_name("w:t") and in_insertion:
+                    parts.append(f"{{+{element.text or ''}+}}")
+                    continue
+                if element.tag in _DRAWING_TAGS and in_deletion:
+                    continue
+            elif self._is_hidden(revisions, mode, accepted_authors):
+                continue
+            parts.append(self._render_content(element))
 
         return "".join(parts).replace("+}{+", "").replace("-][-", "")
+
+    @staticmethod
+    def _is_hidden(
+        revisions: list[tuple[str, str]],
+        mode: str,
+        accepted_authors: Collection[str] | None,
+    ) -> bool:
+        """判断修订内的内容在 accepted / rejected 视图中是否不可见。
+
+        内容可见当且仅当外层插入修订全部被接受、删除修订全部未被接受。
+
+        Args:
+            revisions: 内容外层的修订，每项为 (``ins`` 或 ``del``, 作者)。
+            mode: ``accepted`` 或 ``rejected``。
+            accepted_authors: 只接受这些作者的修订；None 时按 mode 全部接受或全部拒绝。
+
+        Returns:
+            不可见时为 True。
+        """
+        for kind, author in revisions:
+            accepted = (
+                author in accepted_authors
+                if accepted_authors is not None
+                else mode == "accepted"
+            )
+            if (kind == "del" and accepted) or (kind == "ins" and not accepted):
+                return True
+        return False
+
+    @staticmethod
+    def _render_content(element: Any) -> str:
+        """把一个内容元素渲染为文本或占位符。
+
+        Args:
+            element: 标签属于 ``_CONTENT_TAGS`` 的元素。
+
+        Returns:
+            文本、制表符、换行，或图片、脚注、尾注占位符。
+        """
+        tag = element.tag
+        if tag in _TEXT_TAGS:
+            return element.text or ""
+        if tag == qualified_name("w:tab"):
+            return "\t"
+        if tag in _BREAK_TAGS:
+            return "\n"
+        if tag == qualified_name("w:drawing"):
+            drawing_properties = element.find(".//wp:docPr", NAMESPACES)
+            description = ""
+            if drawing_properties is not None:
+                description = (
+                    drawing_properties.get("descr")
+                    or drawing_properties.get("name")
+                    or ""
+                )
+            return f"[图片：{description}]" if description else "[图片]"
+        if tag == qualified_name("w:pict"):
+            return "[图片]"
+        if tag == qualified_name("w:footnoteReference"):
+            return f"[脚注:{element.get(qualified_name('w:id'), '')}]"
+        return f"[尾注:{element.get(qualified_name('w:id'), '')}]"
+
+    @staticmethod
+    def _collect_revisions(node: Any) -> list[dict[str, str]]:
+        """收集节点内插入与删除修订的作者，每位作者一条，时间取最晚。
+
+        Args:
+            node: 段落或表格节点。
+
+        Returns:
+            按作者首次出现顺序排列的 ``{"author", "date"}`` 列表。
+        """
+        latest: dict[str, str] = {}
+        for revision in node.iter(qualified_name("w:ins"), qualified_name("w:del")):
+            author = revision.get(qualified_name("w:author")) or ""
+            date = revision.get(qualified_name("w:date")) or ""
+            latest[author] = max(latest.get(author, ""), date)
+        return [{"author": author, "date": date} for author, date in latest.items()]
 
     def _claim_block_id(self, preferred_id: str, fallback_id: str) -> str:
         """分配当前解析结果中唯一的内容块 ID。
@@ -281,6 +372,7 @@ class DocxParser:
         paragraph: Any,
         xml_index: int,
         mode: str,
+        accepted_authors: Collection[str] | None,
     ) -> DocumentBlock | None:
         """将一个 Word 段落解析为可定位的内容块。
 
@@ -288,11 +380,12 @@ class DocxParser:
             paragraph: ``w:p`` 段落节点。
             xml_index: 段落在正文 body 中的位置。
             mode: 修订内容的展示模式。
+            accepted_authors: 只接受这些作者的修订，取值见 ``parse_blocks``。
 
         Returns:
             解析后的段落块；无内容的普通空段落返回 None。
         """
-        text = self._extract_text(paragraph, mode).strip()
+        text = self._extract_text(paragraph, mode, accepted_authors).strip()
         has_changes = (
             paragraph.find(".//w:ins", NAMESPACES) is not None
             or paragraph.find(".//w:del", NAMESPACES) is not None
@@ -367,6 +460,7 @@ class DocxParser:
             para_id=para_id,
             xml_index=xml_index,
             has_changes=has_changes,
+            revisions=self._collect_revisions(paragraph),
             comments=comments,
         )
 
@@ -375,6 +469,7 @@ class DocxParser:
         table: Any,
         xml_index: int,
         mode: str,
+        accepted_authors: Collection[str] | None,
     ) -> DocumentBlock | None:
         """将 Word 表格解析为保持合并关系提示的 Markdown 表格。
 
@@ -382,6 +477,7 @@ class DocxParser:
             table: ``w:tbl`` 表格节点。
             xml_index: 表格在正文 body 中的位置。
             mode: 修订内容的展示模式。
+            accepted_authors: 只接受这些作者的修订，取值见 ``parse_blocks``。
 
         Returns:
             解析后的表格块；空表格返回 None。
@@ -401,7 +497,9 @@ class DocxParser:
                     filter(
                         None,
                         (
-                            self._extract_text(paragraph, mode).strip()
+                            self._extract_text(
+                                paragraph, mode, accepted_authors
+                            ).strip()
                             for paragraph in table_cell.findall(".//w:p", NAMESPACES)
                         ),
                     )
@@ -438,20 +536,35 @@ class DocxParser:
             text="\n".join(markdown_lines),
             xml_index=xml_index,
             has_changes=has_changes,
+            revisions=self._collect_revisions(table),
         )
 
-    def parse_blocks(self, mode: str) -> list[DocumentBlock]:
+    def parse_blocks(
+        self,
+        mode: str,
+        *,
+        accepted_authors: Collection[str] | None = None,
+    ) -> list[DocumentBlock]:
         """按正文原始顺序解析段落、表格和内容控件。
 
+        同一解析器只应调用一次：块 ID 按本次解析分配，重复调用会被判为冲突。
+
         Args:
-            mode: 修订内容的展示模式。
+            mode: 修订视图，取值见 ``TEXT_MODES``：``accepted`` 接受全部修订，
+                ``rejected`` 拒绝全部修订（修改前原文），``markup`` 显式标记增删。
+            accepted_authors: 仅 accepted 视图可用，只接受这些作者的修订、
+                拒绝其余作者的修订；None 表示接受全部。
 
         Returns:
-            按 document.xml 中出现顺序排列的内容块。
+            按 document.xml 中出现顺序排列的内容块；同一文档各视图的块 ID 一致。
 
         Raises:
-            ValueError: 正文 XML 缺少 body 节点。
+            ValueError: 视图无效，或正文 XML 缺少 body 节点。
         """
+        if mode not in TEXT_MODES:
+            raise ValueError(f"修订视图无效: {mode}")
+        if accepted_authors is not None and mode != "accepted":
+            raise ValueError("accepted_authors 只能用于 accepted 视图")
         body = self.document.find("w:body", NAMESPACES)
         if body is None:
             raise ValueError("DOCX 正文缺少 body 节点")
@@ -461,11 +574,13 @@ class DocxParser:
             local_name = etree.QName(element).localname
             block: DocumentBlock | None = None
             if local_name == "p":
-                block = self._parse_paragraph(element, xml_index, mode)
+                block = self._parse_paragraph(
+                    element, xml_index, mode, accepted_authors
+                )
             elif local_name == "tbl":
-                block = self._parse_table(element, xml_index, mode)
+                block = self._parse_table(element, xml_index, mode, accepted_authors)
             elif local_name == "sdt":
-                text = self._extract_text(element, mode).strip()
+                text = self._extract_text(element, mode, accepted_authors).strip()
                 if text:
                     block = DocumentBlock(
                         block_id=self._claim_block_id(

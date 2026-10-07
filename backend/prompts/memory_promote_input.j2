@@ -1,0 +1,13 @@
+{# 记忆归纳子任务的用户消息。target_level：目标级别；items：待归纳的下级规则（label/scope/content，scope 为范围代号）；existing：目标级已有记忆（id/status/content）。 #}
+{% set upper = {"tenant": "课题组级", "global": "通用级"}[target_level] -%}
+{% set statuses = {"active": "生效", "dormant": "休眠", "candidate": "待审核", "rejected": "已被拒绝"} -%}
+## 待归纳的规则
+{% for item in items -%}
+- [{{ item.label }}|范围 {{ item.scope }}] {{ item.content }}
+{% endfor %}
+## {{ upper }}已有的记忆
+{% for item in existing -%}
+- [{{ item.id }}|{{ statuses[item.status] }}] {{ item.content }}
+{% else -%}
+- 无
+{% endfor %}

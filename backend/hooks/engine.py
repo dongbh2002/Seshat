@@ -25,6 +25,7 @@ class HookEvent(str, Enum):
     AFTER_TOOL_EXECUTE = "after_tool_execute"  # 工具成功执行后。
     TOOL_ERROR = "tool_error"  # 工具执行或工具 Hook 失败时。
     TOOL_CALL_ERROR = "tool_call_error"  # 模型工具调用参数无法解析或下发时。
+    SESSION_END = "session_end"  # 离开当前会话前（新开、恢复其他会话或退出）。
 
 
 @dataclass(frozen=True)
