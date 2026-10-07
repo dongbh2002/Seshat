@@ -10,9 +10,11 @@ from backend.config.settings import (
     DocumentSettings,
     IdentitySettings,
     LoggingSettings,
+    MemorySettings,
     ModelSettings,
     ReviewStateSettings,
     Settings,
+    SignalSettings,
 )
 
 __all__ = [
@@ -24,9 +26,11 @@ __all__ = [
     "DocumentSettings",
     "IdentitySettings",
     "LoggingSettings",
+    "MemorySettings",
     "ModelSettings",
     "ReviewStateSettings",
     "Settings",
+    "SignalSettings",
     "load_config",
     "load_settings",
 ]

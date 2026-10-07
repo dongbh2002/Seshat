@@ -1,11 +1,11 @@
-"""DOCX 结构索引，提供大纲、按标题划分的章节和内容块范围解析。
+"""DOCX 结构索引，提供大纲、按标题划分的章节、块所在标题路径和内容块范围解析。
 
 索引按 revision 缓存，文档修改后自动重建；供上下文引擎和章节类工具共用。
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
@@ -13,6 +13,28 @@ from zipfile import BadZipFile, ZipFile
 from backend.utils.docx.files import calculate_revision, resolve_docx_path
 from backend.utils.docx.models import DocumentBlock
 from backend.utils.docx.parser import DocxParser
+
+HEADING_PATH_SEPARATOR = " > "  # 标题路径中各级标题的分隔符。
+
+
+def build_heading_paths(blocks: Sequence[DocumentBlock]) -> list[str]:
+    """计算每个内容块所在的标题路径（从一级标题到最近的标题，含标题块自身）。
+
+    Args:
+        blocks: 按文档顺序排列的内容块。
+
+    Returns:
+        与 blocks 一一对应的标题路径；首个标题前的块为空字符串。
+    """
+    stack: list[tuple[int, str]] = []
+    paths: list[str] = []
+    for block in blocks:
+        if block.kind == "heading":
+            while stack and stack[-1][0] >= block.level:
+                stack.pop()
+            stack.append((block.level, " ".join(block.text.split())))
+        paths.append(HEADING_PATH_SEPARATOR.join(title for _, title in stack))
+    return paths
 
 
 @dataclass(frozen=True)
@@ -44,6 +66,24 @@ class DocumentSnapshot:
     sections: tuple[DocumentSection, ...]  # 按文档顺序排列的章节。
     block_ids: tuple[str, ...]  # 按文档顺序排列的全部内容块 ID。
     block_texts: tuple[str, ...]  # 与 block_ids 一一对应的块正文（接受修订视图）。
+    heading_paths: tuple[str, ...]  # 与 block_ids 一一对应的所在标题路径。
+
+    def get_heading_path(self, block_id: str) -> str:
+        """按 ID 查找内容块所在的标题路径。
+
+        Args:
+            block_id: 内容块 ID。
+
+        Returns:
+            形如 ``4 实验 > 4.2 结果`` 的标题路径；首个标题前的块为空字符串。
+
+        Raises:
+            ValueError: 内容块 ID 不存在。
+        """
+        try:
+            return self.heading_paths[self.block_ids.index(block_id)]
+        except ValueError as error:
+            raise ValueError(f"内容块 ID 不存在: {block_id}") from error
 
     def get_block_text(self, block_id: str) -> str:
         """按 ID 查找内容块正文。
@@ -184,6 +224,7 @@ class DocumentIndex:
             sections=self._split_sections(blocks),
             block_ids=tuple(block.block_id for block in blocks),
             block_texts=tuple(block.text for block in blocks),
+            heading_paths=tuple(build_heading_paths(blocks)),
         )
         self._snapshots[relative_path] = snapshot
         return snapshot

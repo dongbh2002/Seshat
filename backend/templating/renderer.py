@@ -7,7 +7,7 @@ from typing import Any
 
 from jinja2 import Environment, StrictUndefined
 
-from backend.templating.filters import oneline, truncate_middle
+from backend.templating.filters import inline_diff, oneline, truncate_middle
 
 PROMPT_DIRECTORY = Path(__file__).resolve().parents[1] / "prompts"  # 提示词模板目录。
 
@@ -29,7 +29,11 @@ class PromptRenderer:
             undefined=StrictUndefined
         )
         self._environment.filters.update(
-            {"oneline": oneline, "truncate_middle": truncate_middle}
+            {
+                "inline_diff": inline_diff,
+                "oneline": oneline,
+                "truncate_middle": truncate_middle,
+            }
         )
 
     def render(self, name: str, **variables: Any) -> str:

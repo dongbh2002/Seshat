@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, Protocol
 
 from backend.config import ReviewStateSettings
 from backend.session import ReviewStateStore
@@ -12,6 +12,21 @@ from backend.templating import PromptRenderer
 from backend.utils.docx import DocumentIndex, DocumentSnapshot
 
 _TEMPLATE = "review_state_prompt.j2"
+
+
+class VersionNoticeSource(Protocol):
+    """提供文档版本待确认提示的组件（信号采集）；未接入时审阅状态不展示该部分。"""
+
+    def get_version_notice(self, revision: str) -> Mapping[str, Any] | None:
+        """返回文档版本的待确认提示。
+
+        Args:
+            revision: 文档当前 revision。
+
+        Returns:
+            待确认提示；无需确认时为 None。
+        """
+        ...
 
 
 class ReviewStateContext:
@@ -23,6 +38,7 @@ class ReviewStateContext:
         store: ReviewStateStore,
         document_index: DocumentIndex,
         renderer: PromptRenderer,
+        version_notices: VersionNoticeSource | None,
     ) -> None:
         """初始化审阅状态上下文。
 
@@ -31,6 +47,7 @@ class ReviewStateContext:
             store: 跨轮次保留的结构化审阅状态。
             document_index: 为已登记文档提供大纲和章节的结构索引。
             renderer: 提示词模板渲染器。
+            version_notices: 文档版本待确认提示的来源；不采集信号时为 None。
 
         Returns:
             None。
@@ -41,6 +58,7 @@ class ReviewStateContext:
         self.store = store  # 审阅状态存储。
         self.document_index = document_index  # 文档结构索引。
         self.renderer = renderer  # 提示词模板渲染器。
+        self.version_notices = version_notices  # 文档版本待确认提示的来源。
 
     def render(
         self,
@@ -59,12 +77,14 @@ class ReviewStateContext:
         """
         state = self.store.snapshot()
         documents: list[dict[str, Any]] = []
+        revisions: dict[str, str] = {}  # 本次已加载文档的路径到当前 revision。
         for path, document in state["documents"].items():
             try:
                 snapshot = self.document_index.load(path)
             except (OSError, ValueError) as error:
                 documents.append({"path": path, "error": str(error)})
                 continue
+            revisions[path] = snapshot.revision
             documents.append(
                 self._build_document_view(
                     snapshot,
@@ -93,9 +113,42 @@ class ReviewStateContext:
             hidden_open_count=len(open_findings) - len(shown_findings),
             closed_counts=dict(closed_counts),
             decisions=state["decisions"],
+            version_notices=self._collect_version_notices(state, revisions),
             unrecorded_reads=list(unrecorded_reads),
             forced_reads=list(forced_reads),
         )
+
+    def _collect_version_notices(
+        self,
+        state: Mapping[str, Any],
+        revisions: Mapping[str, str],
+    ) -> list[Mapping[str, Any]]:
+        """收集本会话涉及的文档（已读取或有问题记录）的版本待确认提示。
+
+        Args:
+            state: ReviewStateStore.snapshot 的结果。
+            revisions: 已加载文档的路径到当前 revision，其余路径按需加载。
+
+        Returns:
+            去重后的待确认提示；未接入提示来源时为空。
+        """
+        if self.version_notices is None:
+            return []
+        paths = dict.fromkeys(
+            [*state["documents"], *(finding["path"] for finding in state["findings"])]
+        )
+        notices: dict[str, Mapping[str, Any]] = {}
+        for path in paths:
+            revision = revisions.get(path)
+            if revision is None:
+                try:
+                    revision = self.document_index.load(path).revision
+                except (OSError, ValueError):
+                    continue
+            notice = self.version_notices.get_version_notice(revision)
+            if notice is not None:
+                notices.setdefault(notice["revision"], notice)
+        return list(notices.values())
 
     def sync_documents(self) -> None:
         """按磁盘当前内容同步已登记文档：登记会话外修改，撤销内容已变化块的已审阅标记。

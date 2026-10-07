@@ -18,6 +18,7 @@ class DocumentBlock:
     style: str = ""  # Word 样式显示名或列表类型。
     para_id: str = ""  # Word 原生 w14:paraId，段落不存在时为空。
     has_changes: bool = False  # 内容块是否包含插入或删除修订。
+    revisions: list[dict[str, str]] = field(default_factory=list)  # 修订作者与时间。
     comments: list[dict[str, str]] = field(default_factory=list)  # 块关联的批注。
 
     def to_index(self) -> dict[str, Any]:

@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from backend.memory import MemorySource
 from backend.runtime.context.compression import (
     CompressionStrategy,
     Context,
@@ -46,6 +47,7 @@ class ContextEngine:
         review_state_context: ReviewStateContext,
         estimator: TokenEstimator,
         physical_limit_tokens: int,
+        memory: MemorySource | None,
     ) -> None:
         """渲染系统提示词并初始化上下文引擎。
 
@@ -55,6 +57,7 @@ class ContextEngine:
             review_state_context: 审阅工作状态的渲染器。
             estimator: token 估算器。
             physical_limit_tokens: 请求允许的 token 上限（模型窗口减输出预留）。
+            memory: 画像与长期记忆的来源；未启用记忆（游客、评估）时为 None。
 
         Returns:
             None。
@@ -68,6 +71,7 @@ class ContextEngine:
         self.review_state_context = review_state_context  # 审阅工作状态渲染器。
         self.estimator = estimator  # token 估算器。
         self.physical_limit_tokens = physical_limit_tokens  # 请求的物理 token 上限。
+        self.memory = memory  # 画像与长期记忆的来源。
         self.archive = HistoryArchive.empty()  # 已归档轮次，摘要只追加不重算。
         self.system_prompt = renderer.render("system_prompt.j2")  # 基础系统提示词。
         if not self.system_prompt:
@@ -97,10 +101,11 @@ class ContextEngine:
             ContextOverflowError: 压缩后仍超出模型物理上限。
         """
         self.review_state_context.sync_documents()
+        memory = self.memory.select_memory() if self.memory is not None else {}
         base_instruction = self._merge_instruction_contexts(
             self.system_prompt,
-            self._get_profile_context(),
-            self._get_memory_context(),
+            self._get_profile_context(memory),
+            self._get_memory_context(memory),
         )
         review_state = self.review_state_context.render(
             unrecorded_reads=[],
@@ -192,23 +197,37 @@ class ContextEngine:
         self.archive = HistoryArchive(**copy.deepcopy(dict(state["archive"])))
         self.review_state_context.restore_state(state["review_state"])
 
-    def _get_profile_context(self) -> str:
+    def _get_profile_context(self, memory: Mapping[str, Any]) -> str:
         """获取当前服务对象的研究与写作画像上下文。
 
-        Returns:
-            已渲染的画像提示词；当前未接入画像存储。
-        """
-        # TODO: 从当前租户和用户的画像存储中读取 profile 变量。
-        return self.renderer.render("profile_prompt.j2")
-
-    def _get_memory_context(self) -> str:
-        """获取与当前任务相关的长期记忆上下文。
+        Args:
+            memory: 本步选取的记忆，``profile`` 为用户级事实；未启用记忆时为空。
 
         Returns:
-            已渲染的记忆提示词；空模板返回空字符串。
+            已渲染的画像提示词。
         """
-        # TODO: 接入记忆存储和相关性检索后，向模板传入本轮记忆。
-        return self.renderer.render("memory_prompt.j2")
+        return self.renderer.render(
+            "profile_prompt.j2", profile=memory.get("profile", [])
+        )
+
+    def _get_memory_context(self, memory: Mapping[str, Any]) -> str:
+        """获取当前会话的长期记忆上下文。
+
+        Args:
+            memory: 本步选取的记忆（documents、advisor、tenant、user、general）；未启用记忆时为空。
+
+        Returns:
+            已渲染的记忆提示词；没有记忆时为空字符串。
+        """
+        # TODO: 记忆增多后按当前任务做相关性检索，而不只按支持数截断。
+        return self.renderer.render(
+            "memory_prompt.j2",
+            documents=memory.get("documents", []),
+            advisor=memory.get("advisor", []),
+            tenant=memory.get("tenant", []),
+            user=memory.get("user", []),
+            general=memory.get("general", []),
+        )
 
     @staticmethod
     def _merge_instruction_contexts(*contexts: str) -> str:

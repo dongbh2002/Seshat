@@ -324,6 +324,7 @@ def run_once(
             document_root=root,
             client=client,  # type: ignore[arg-type]
             model="scripted",
+            learning=False,
         )
         recorder.timer = _install_strategy(runtime, strategy["kind"], budget)
         runtime.hook_engine.register(

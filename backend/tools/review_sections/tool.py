@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 from backend.llm_tasks import SectionReviewer
+from backend.memory import MemorySource
 from backend.session import ReviewStateStore
 from backend.tools.base import ToolImpact
 from backend.tools.section_tool import SectionTool
@@ -51,6 +52,7 @@ class ReviewSectionsTool(SectionTool):
         document_index: DocumentIndex,
         reviewer: SectionReviewer,
         store: ReviewStateStore,
+        memory: MemorySource | None,
     ) -> None:
         """初始化章节审阅工具。
 
@@ -58,6 +60,7 @@ class ReviewSectionsTool(SectionTool):
             document_index: 提供章节划分的文档结构索引。
             reviewer: 在独立上下文中审阅单个章节的子任务。
             store: 写入问题和审阅进度的审阅状态存储。
+            memory: 长期记忆来源，审阅时传给子任务；未启用记忆时为 None。
 
         Returns:
             None。
@@ -65,6 +68,7 @@ class ReviewSectionsTool(SectionTool):
         super().__init__(document_index)
         self.reviewer = reviewer  # 单章节审阅子任务。
         self.store = store  # 审阅结果写入的状态存储。
+        self.memory = memory  # 长期记忆来源。
 
     def execute(self, **arguments: Any) -> dict[str, Any]:
         """逐章审阅并把结果写入审阅状态。
@@ -91,6 +95,11 @@ class ReviewSectionsTool(SectionTool):
                 if self.store.get_unreviewed(snapshot.path, section.block_ids)
             ]
         decisions = self.store.snapshot()["decisions"]
+        memory = (
+            self.memory.rules_for_review(snapshot.revision)
+            if self.memory is not None
+            else []
+        )
 
         results: list[dict[str, Any]] = []
         warnings: list[str] = []
@@ -101,6 +110,7 @@ class ReviewSectionsTool(SectionTool):
                     section.markdown,
                     focus=focus.strip(),
                     decisions=decisions,
+                    memory=memory,
                 )
             except Exception as error:  # noqa: BLE001 - 单章失败不影响其他章节。
                 entry["error"] = str(error)

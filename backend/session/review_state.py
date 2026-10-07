@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import threading
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 from backend.utils.docx import is_position_based_block_id
@@ -361,8 +361,24 @@ class ReviewStateStore:
         with self._lock:
             if finding_id not in self._findings:
                 raise ValueError(f"问题编号不存在: {finding_id}")
-            # TODO: 记录状态变化的时间线（open → rejected 等），供记忆沉淀分析。
             self._findings[finding_id].status = status
+
+    def get_finding(self, finding_id: str) -> ReviewFinding:
+        """按编号查询问题。
+
+        Args:
+            finding_id: 问题编号。
+
+        Returns:
+            问题的独立副本。
+
+        Raises:
+            ValueError: 问题编号不存在。
+        """
+        with self._lock:
+            if finding_id not in self._findings:
+                raise ValueError(f"问题编号不存在: {finding_id}")
+            return replace(self._findings[finding_id])
 
     def add_decision(self, text: str) -> None:
         """记录一条用户审阅决定或偏好。

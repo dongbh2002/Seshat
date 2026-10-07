@@ -75,10 +75,16 @@ def test_create_default_runtime_keeps_multi_turn_messages_and_tools(
 
     assert first_reply == "模拟回复"
     assert second_reply == "模拟回复"
-    assert fake_client.chat.completions.create.call_count == 2
-    second_messages = fake_client.chat.completions.create.call_args_list[1].kwargs[
-        "messages"
+    # 非游客每轮结束后还有后台记忆 agent 的调用，这里只校验主对话的请求。
+    main_calls = [
+        call_args
+        for call_args in fake_client.chat.completions.create.call_args_list
+        if not call_args.kwargs["messages"][0]["content"].startswith(
+            "你是 Seshat 的记忆 agent"
+        )
     ]
+    assert len(main_calls) == 2
+    second_messages = main_calls[1].kwargs["messages"]
     assert [message["role"] for message in second_messages] == [
         "system",
         "user",
@@ -99,6 +105,7 @@ def test_create_default_runtime_keeps_multi_turn_messages_and_tools(
         "list_findings",
         "summarize_sections",
         "review_sections",
+        "confirm_document_version",
     ]
     assert runtime.hook_scope.tenant_id == "233"
     assert runtime.hook_scope.user_id == "dbh"
