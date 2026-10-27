@@ -66,5 +66,5 @@ class LLMTask:
             raise ValueError("模型未返回 JSON 对象")
         data = json.loads(content[start : end + 1])
         if not isinstance(data, dict):
-            raise ValueError("模型返回的 JSON 不是对象")
+            raise ValueError("模型返回的 JSON 不是对象")  # noqa: TRY004 - 模型输出格式错误保留 ValueError 接口。
         return data

@@ -97,6 +97,32 @@ class SignalSettings:
 
 
 @dataclass(frozen=True)
+class PaperSettings:
+    """在线论文检索、正文读取及用户级缓存的显式配置。"""
+
+    enabled: bool  # 是否注册在线论文工具。
+    source: str  # 题录检索源，当前支持 openalex。
+    api_base_url: str  # 检索 API 根地址。
+    api_key_env: str | None  # API 密钥环境变量名；null 明确表示匿名访问。
+    user_agent: str  # 网络请求使用的应用标识。
+    request_timeout_seconds: float  # 单次下载（含重定向）的最长时间。
+    tool_timeout_seconds: float  # 单次工具调用的最长时间。
+    request_interval_seconds: float  # 网络请求之间的最短间隔。
+    max_download_bytes: int  # 单次响应解压后的字节上限。
+    max_redirects: int  # 单次下载允许跟随的重定向次数。
+    max_fulltext_sources: int  # 一次读取最多尝试的公开正文入口数。
+    search_default_limit: int  # 未指定 limit 时返回的论文数。
+    search_max_limit: int  # 单次检索允许返回的论文数上限。
+    abstract_max_chars: int  # 单条检索结果摘要的字符上限。
+    max_authors: int  # 单条题录展示的作者数上限。
+    read_default_max_chars: int  # 未指定 max_chars 时返回的正文字数。
+    read_max_chars: int  # 单次读取允许返回的正文字数上限。
+    max_pdf_pages: int  # 单篇 PDF 允许解析的页数上限。
+    max_pdf_stream_bytes: int  # 单页 PDF 解压后的内容流字节上限。
+    cache_ttl_seconds: float  # 提取结果缓存的有效时长。
+
+
+@dataclass(frozen=True)
 class MemorySettings:
     """四级记忆配置：记忆 agent 的输入上限、会话结束时的晋升门槛与注入上下文的条目上限。"""
 
@@ -159,6 +185,7 @@ class Settings:
     context: ContextSettings  # 上下文组装与压缩配置。
     documents: DocumentSettings  # 文档结构索引与章节子任务配置。
     signals: SignalSettings  # 修改信号采集配置。
+    papers: PaperSettings  # 在线论文工具配置。
     memory: MemorySettings  # 四级记忆配置。
     logging: LoggingSettings  # 本地文件日志配置。
     current_model: str  # 当前启用的模型配置名称。
@@ -360,6 +387,57 @@ def parse_settings(data: Mapping[str, Any]) -> Settings:
         ),
     )
 
+    papers_data = _require_mapping(data.get("papers"), "papers")
+    key_env = papers_data.get("api_key_env")
+    papers = PaperSettings(
+        enabled=_require_bool(papers_data.get("enabled"), "papers.enabled"),
+        source=_require_string(papers_data.get("source"), "papers.source"),
+        api_base_url=_require_string(
+            papers_data.get("api_base_url"), "papers.api_base_url"
+        ),
+        api_key_env=(
+            None if key_env is None else _require_string(key_env, "papers.api_key_env")
+        ),
+        user_agent=_require_string(papers_data.get("user_agent"), "papers.user_agent"),
+        **{
+            name: _require_positive_number(papers_data.get(name), f"papers.{name}")
+            for name in (
+                "request_timeout_seconds",
+                "tool_timeout_seconds",
+                "request_interval_seconds",
+                "cache_ttl_seconds",
+            )
+        },
+        max_redirects=_require_non_negative_int(
+            papers_data.get("max_redirects"), "papers.max_redirects"
+        ),
+        **{
+            name: _require_positive_int(papers_data.get(name), f"papers.{name}")
+            for name in (
+                "max_download_bytes",
+                "max_fulltext_sources",
+                "search_default_limit",
+                "search_max_limit",
+                "abstract_max_chars",
+                "max_authors",
+                "read_default_max_chars",
+                "read_max_chars",
+                "max_pdf_pages",
+                "max_pdf_stream_bytes",
+            )
+        },
+    )
+    if "api_key_env" not in papers_data:
+        raise ValueError("papers.api_key_env 必须显式指定变量名或 null")
+    if papers.source != "openalex":
+        raise ValueError(f"不支持的论文检索源: {papers.source}")
+    if not papers.search_default_limit <= papers.search_max_limit <= 100:
+        raise ValueError("papers 检索条数须满足 default <= max <= 100")
+    if papers.read_default_max_chars > papers.read_max_chars:
+        raise ValueError("papers.read_default_max_chars 不能大于 read_max_chars")
+    if papers.request_timeout_seconds > papers.tool_timeout_seconds:
+        raise ValueError("papers.request_timeout_seconds 不能大于 tool_timeout_seconds")
+
     memory_data = _require_mapping(data.get("memory"), "memory")
     weights_data = _require_mapping(
         memory_data.get("evidence_weights"), "memory.evidence_weights"
@@ -435,6 +513,7 @@ def parse_settings(data: Mapping[str, Any]) -> Settings:
         ),
         documents=documents,
         signals=signals,
+        papers=papers,
         memory=memory,
         logging=logging_settings,
         current_model=current_model,

@@ -112,7 +112,7 @@ class ToolEngine:
             executed_payload = before_context.payload
             hooked_arguments = before_context.payload.get("arguments")
             if not isinstance(hooked_arguments, Mapping):
-                raise ValueError("before_tool_execute 必须保留对象类型的 arguments")
+                raise ValueError("before_tool_execute 必须保留对象类型的 arguments")  # noqa: TRY004 - Hook 校验保留既有 ValueError 接口。
 
             executor = ThreadPoolExecutor(
                 max_workers=1,

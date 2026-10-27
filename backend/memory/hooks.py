@@ -175,6 +175,6 @@ def _safely(step: str, function: Callable[..., Any], *arguments: Any) -> Any:
     """
     try:
         return function(*arguments)
-    except Exception:  # noqa: BLE001 - 记忆失败不影响对话与后续步骤。
+    except Exception:
         _LOGGER.exception("记忆步骤失败: %s", step)
         return None

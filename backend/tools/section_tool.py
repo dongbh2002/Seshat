@@ -50,7 +50,7 @@ class SectionTool(BaseTool):
         if section_ids is None:
             return snapshot, list(snapshot.sections)
         if not isinstance(section_ids, Sequence) or isinstance(section_ids, str):
-            raise ValueError("section_ids 必须是字符串数组")
+            raise ValueError("section_ids 必须是字符串数组")  # noqa: TRY004 - 工具参数校验保留 ValueError 接口。
         return snapshot, [
             snapshot.get_section(section_id) for section_id in section_ids
         ]

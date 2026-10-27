@@ -520,17 +520,25 @@ def write_report(
         "",
         "## 方法",
         "",
-        "- 在真实 Runtime（真实工具、Hook、ContextEngine）上，用脚本化模型跑固定的 10 轮剧本："
-        "通读全文 → 提约束 → 问章节 → 修订式编辑 → 问另一章 → 查看改动 → 检查章节并遵守约束 → "
-        "审阅最大章 → 回到被改过的章节 → 回顾全程。",
-        "- 模型只依据每次请求中实际可见的内容行动：所需块不在上下文就按块 ID 重读；"
-        "看得到就直接使用（与真实模型一样无法分辨过时正文）。",
+        (
+            "- 在真实 Runtime（真实工具、Hook、ContextEngine）上，用脚本化模型跑固定的 10 轮剧本："
+            "通读全文 → 提约束 → 问章节 → 修订式编辑 → 问另一章 → 查看改动 → 检查章节并遵守约束 → "
+            "审阅最大章 → 回到被改过的章节 → 回顾全程。"
+        ),
+        (
+            "- 模型只依据每次请求中实际可见的内容行动：所需块不在上下文就按块 ID 重读；"
+            "看得到就直接使用（与真实模型一样无法分辨过时正文）。"
+        ),
         "- 行为 compliant 会标记已审阅、记录问题和用户约束；noncompliant 从不记录，考察模型不配合时的退化。",
-        "- 对照组：no_compression（不压缩）、sliding_window（超预算整轮丢弃最旧历史）、"
-        "clear_tool_results（历史工具结果一律清空，再滑动窗口）；"
-        "tiered_no_retain 为消融：不保留最近一轮的读取。",
-        f"- 文档：{document['name']}，{document['blocks']} 个块，{document['chars']} 字符，"
-        f"约 {document['tokens']} token；每轮回复 {eval_config['answer_chars']} 字符。",
+        (
+            "- 对照组：no_compression（不压缩）、sliding_window（超预算整轮丢弃最旧历史）、"
+            "clear_tool_results（历史工具结果一律清空，再滑动窗口）；"
+            "tiered_no_retain 为消融：不保留最近一轮的读取。"
+        ),
+        (
+            f"- 文档：{document['name']}，{document['blocks']} 个块，{document['chars']} 字符，"
+            f"约 {document['tokens']} token；每轮回复 {eval_config['answer_chars']} 字符。"
+        ),
         "",
         "## 指标定义",
         "",

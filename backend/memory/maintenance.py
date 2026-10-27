@@ -138,7 +138,10 @@ class MemoryMaintenance:
             if changes:
                 limit = self.settings.history_max_entries
                 self.store.update(
-                    scope, lambda items, changes=changes: _apply(items, changes, limit)
+                    scope,
+                    lambda items, changes=changes, limit=limit: _apply(
+                        items, changes, limit
+                    ),
                 )
                 total += len(changes)
                 live = self._live(scope)

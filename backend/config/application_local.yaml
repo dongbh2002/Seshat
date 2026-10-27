@@ -48,6 +48,29 @@ signals:
   max_candidates: 3
   block_match_threshold: 0.5
 
+# 在线论文：检索题录后按需读取公开正文，提取缓存按启动身份隔离。
+papers:
+  enabled: true  # 是否注册 search_papers 与 read_paper。
+  source: openalex  # 题录检索源。
+  api_base_url: https://api.openalex.org  # 检索 API 根地址。
+  api_key_env: null  # null 为匿名访问；也可指定 env/.env 或进程环境中的密钥变量名。
+  user_agent: Seshat/0.1 (academic-paper-assistant)  # 对外请求的应用标识。
+  request_timeout_seconds: 30  # 单次下载含重定向的时间上限。
+  tool_timeout_seconds: 120  # 工具调用整体的时间上限。
+  request_interval_seconds: 0.5  # 请求之间的最短间隔。
+  max_download_bytes: 20971520  # 单个响应解压后的字节上限：20 MiB。
+  max_redirects: 5  # 单次下载最多跟随的重定向次数。
+  max_fulltext_sources: 3  # 一次读取最多尝试的公开正文入口数。
+  search_default_limit: 5  # 默认检索条数。
+  search_max_limit: 20  # 单次检索条数上限。
+  abstract_max_chars: 1500  # 单篇摘要展示的字符上限。
+  max_authors: 20  # 单篇题录展示的作者数上限。
+  read_default_max_chars: 8000  # 默认正文返回字数。
+  read_max_chars: 20000  # 单次正文返回字数上限。
+  max_pdf_pages: 200  # 单篇 PDF 解析页数上限。
+  max_pdf_stream_bytes: 20971520  # 单页 PDF 解压后内容流的字节上限。
+  cache_ttl_seconds: 86400  # 提取缓存有效时长：一天。
+
 # 四级记忆（游客不启用）：每轮结束后由记忆 agent 决定写入文档、用户、课题组（导师要求）级；
 # 会话结束时提炼课题组共性（多名学生）与通用候选（多个课题组），通用级须人工审核后生效；
 # 会话结束时维护：长期未被支持的用户级、课题组级记忆转为休眠，条目较多时由模型整理本会话变动的条目，

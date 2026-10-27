@@ -154,7 +154,7 @@ class SessionRepository:
         """
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
-            raise ValueError(f"会话文件根节点必须是对象: {path.name}")
+            raise ValueError(f"会话文件根节点必须是对象: {path.name}")  # noqa: TRY004 - 持久化格式错误保留 ValueError 接口。
         version = data.pop("schema_version", None)
         if version != SCHEMA_VERSION:
             raise ValueError(

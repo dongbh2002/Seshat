@@ -46,5 +46,5 @@ class MemoryPromoter(LLMTask):
         )
         groups = self._request_json(system_prompt, user_content).get("groups")
         if not isinstance(groups, list):
-            raise ValueError("模型返回缺少 groups 数组")
+            raise ValueError("模型返回缺少 groups 数组")  # noqa: TRY004 - 模型输出格式错误保留 ValueError 接口。
         return [item for item in groups if isinstance(item, dict)]
