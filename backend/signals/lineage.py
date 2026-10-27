@@ -11,7 +11,7 @@ import json
 import os
 import shutil
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -214,7 +214,7 @@ class DocumentLineage:
             and not record.paper_id
             and not record.parent_revision
         ):
-            record.paper_id = new_time_id(datetime.now())
+            record.paper_id = new_time_id(datetime.now(timezone.utc).astimezone())
         self._records[record.revision] = record
         self._save()
 
@@ -312,7 +312,7 @@ class DocumentLineage:
         record.paper_id = (
             self._records[parent_revision].paper_id
             if parent_revision
-            else new_time_id(datetime.now())
+            else new_time_id(datetime.now(timezone.utc).astimezone())
         )
         record.status = "confirmed"
         record.candidates = []

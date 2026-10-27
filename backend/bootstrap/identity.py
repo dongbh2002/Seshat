@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from backend.config import Settings
 from backend.utils.time_id import new_time_id
@@ -46,7 +46,8 @@ def resolve_identity(
         return Identity(
             tenant_id=_validate_name("租户", guest.guest_tenant),
             user_id=_validate_name(
-                "用户", f"{guest.guest_user_prefix}-{new_time_id(datetime.now())}"
+                "用户",
+                f"{guest.guest_user_prefix}-{new_time_id(datetime.now(timezone.utc).astimezone())}",
             ),
             is_guest=True,
         )

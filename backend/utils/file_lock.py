@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from types import TracebackType
 
+from typing_extensions import Self
+
 _POLL_SECONDS = 0.05  # 等待锁时的轮询间隔。
 
 
@@ -34,7 +36,7 @@ class FileLock:
         self.timeout_seconds = timeout_seconds  # 等待锁的最长秒数。
         self.stale_seconds = stale_seconds  # 残留锁的判定秒数。
 
-    def __enter__(self) -> FileLock:
+    def __enter__(self) -> Self:
         """获取锁，必要时创建所在目录。
 
         Returns:

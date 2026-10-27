@@ -123,16 +123,16 @@ class ConfirmDocumentVersionTool(BaseTool):
             ValueError: 结构无效或作者名为空。
         """
         if not isinstance(value, list):
-            raise ValueError("author_roles 必须是数组")
+            raise ValueError("author_roles 必须是数组")  # noqa: TRY004 - 工具参数校验保留 ValueError 接口。
         roles: dict[str, str] = {}
         for item in value:
             if not isinstance(item, Mapping):
-                raise ValueError("author_roles 的每一项必须是对象")
+                raise ValueError("author_roles 的每一项必须是对象")  # noqa: TRY004 - 工具参数校验保留 ValueError 接口。
             author = item.get("author")
             role = item.get("role")
             if not isinstance(author, str) or not author.strip():
                 raise ValueError("author 必须是非空字符串")
             if not isinstance(role, str):
-                raise ValueError("role 必须是字符串")
+                raise ValueError("role 必须是字符串")  # noqa: TRY004 - 工具参数校验保留 ValueError 接口。
             roles[author] = role
         return roles

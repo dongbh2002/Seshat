@@ -106,6 +106,8 @@ def test_create_default_runtime_keeps_multi_turn_messages_and_tools(
         "summarize_sections",
         "review_sections",
         "confirm_document_version",
+        "search_papers",
+        "read_paper",
     ]
     assert runtime.hook_scope.tenant_id == "233"
     assert runtime.hook_scope.user_id == "dbh"

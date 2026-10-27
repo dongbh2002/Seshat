@@ -74,7 +74,7 @@ class MemoryCurator:
         entries: list[VisibleMemory] = []
         for scope in self.store.document_scopes(self.tenant_id, self.user_id):
             label = f"文档《{self.lineage.paper_title(scope.paper_id)}》"
-            entries.extend(self._live(scope, lambda _: label))
+            entries.extend(self._live(scope, lambda _, label=label: label))
         entries.extend(
             self._live(
                 MemoryScope("user", self.tenant_id, self.user_id), lambda _: "用户"

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from backend.utils.time_id import new_time_id
@@ -119,7 +119,7 @@ class MemoryItem:
             raise ValueError("记忆内容不能为空")
         now = _now()
         return cls(
-            id=f"{level[0].upper()}-{new_time_id(datetime.now())}",
+            id=f"{level[0].upper()}-{new_time_id(datetime.now(timezone.utc).astimezone())}",
             level=level,
             kind=kind,
             content=" ".join(content.split()),

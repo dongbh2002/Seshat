@@ -27,12 +27,12 @@ from backend.memory.store import ArchivedMemory, MemoryStore
 
 __all__ = [
     "EDITABLE_LEVELS",
-    "ArchivedMemory",
     "LIVE_STATUSES",
     "MEMORY_KINDS",
     "MEMORY_LEVELS",
     "MEMORY_SOURCES",
     "MEMORY_STATUSES",
+    "ArchivedMemory",
     "MemoryAgentHook",
     "MemoryCurator",
     "MemoryItem",

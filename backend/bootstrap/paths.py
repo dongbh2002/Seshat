@@ -7,6 +7,7 @@
     transcripts/<tenant_id>/<user_id>/  每个会话只追加的对话原文 <session_id>.jsonl
     snapshots/<tenant_id>/<user_id>/    见过的文档版本快照 <revision>.docx 与版本链 lineage.json
     memory/<tenant_id>/<user_id>/       用户级记忆 user.json、文档级记忆 documents/<paper_id>.json、提炼进度 state.json
+    papers/<tenant_id>/<user_id>/       在线论文提取缓存（题录、来源与正文块）
     tenants/<tenant_id>/                课题组共享数据：成员表 roster.json、课题组级记忆 memory.json
     global/                             通用级记忆 memory.json（含待审核候选）
 """
@@ -26,6 +27,7 @@ TRANSCRIPTS_DIRNAME = "transcripts"  # 数据根目录下存放各用户对话�
 SNAPSHOTS_DIRNAME = "snapshots"  # 数据根目录下存放各用户文档版本快照的子目录名。
 TENANTS_DIRNAME = "tenants"  # 数据根目录下存放课题组共享数据的子目录名。
 MEMORY_DIRNAME = "memory"  # 数据根目录下存放各用户记忆的子目录名。
+PAPERS_DIRNAME = "papers"  # 数据根目录下存放各用户在线论文缓存的子目录名。
 GLOBAL_DIRNAME = "global"  # 数据根目录下存放通用数据的子目录名。
 
 
@@ -118,6 +120,19 @@ def tenant_directory(settings: Settings, identity: Identity) -> Path:
         <data.root>/tenants/<tenant_id> 的绝对路径（不保证存在）。
     """
     return tenants_root(settings) / identity.tenant_id
+
+
+def paper_directory(settings: Settings, identity: Identity) -> Path:
+    """返回身份对应的在线论文缓存目录。
+
+    Args:
+        settings: 类型化项目配置，提供数据根目录。
+        identity: 当前租户与用户身份。
+
+    Returns:
+        <data.root>/papers/<tenant_id>/<user_id> 的绝对路径（不保证存在）。
+    """
+    return _user_directory(settings, PAPERS_DIRNAME, identity)
 
 
 def memory_root(settings: Settings) -> Path:

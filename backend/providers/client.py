@@ -1,22 +1,22 @@
 """通用模型客户端创建模块，根据注入配置读取对应的环境变量。"""
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
-from typing import Optional, Tuple
 
 from dotenv import dotenv_values
 from openai import OpenAI
 
 from backend.config import Settings
 
-
 _DEFAULT_ENV_PATH = Path(__file__).resolve().parents[2] / "env" / ".env"
 
 
 def create_model_client(
     settings: Settings,
-    env_path: Optional[Path] = None,
-) -> Tuple[OpenAI, str]:
+    env_path: Path | None = None,
+) -> tuple[OpenAI, str]:
     """按类型化项目配置创建客户端并取得实际模型名称。
 
     Args:

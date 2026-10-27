@@ -40,7 +40,7 @@ class SectionReviewer(LLMTask):
         )
         findings = self._request_json(system_prompt, markdown).get("findings")
         if not isinstance(findings, list):
-            raise ValueError("模型返回缺少 findings 数组")
+            raise ValueError("模型返回缺少 findings 数组")  # noqa: TRY004 - 模型输出格式错误保留 ValueError 接口。
         return [
             {"block_id": item["block_id"], "issue": item["issue"].strip()}
             for item in findings

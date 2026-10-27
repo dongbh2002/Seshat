@@ -7,15 +7,18 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import dotenv_values
 from openai import OpenAI
 
 from backend.bootstrap.identity import Identity
 from backend.bootstrap.paths import (
     global_directory,
     memory_root,
+    paper_directory,
     resolve_project_path,
     session_directory,
     signal_directory,
@@ -45,6 +48,7 @@ from backend.memory import (
     MemoryScorer,
     MemoryStore,
 )
+from backend.papers import OpenAlexSource, PaperHttp, PaperReader
 from backend.providers import create_model_client
 from backend.runtime import AgentLoop, Runtime, ToolEngine
 from backend.runtime.context import (
@@ -76,7 +80,9 @@ from backend.tools import (
     ConfirmDocumentVersionTool,
     ListFindingsTool,
     ReadDocumentTool,
+    ReadPaperTool,
     ReviewSectionsTool,
+    SearchPapersTool,
     SummarizeSectionsTool,
     UpdateReviewStateTool,
     WriteDocumentTool,
@@ -233,6 +239,9 @@ def create_runtime(
         learned.agent_hook.register(hook_engine)
         tool_engine.register(ConfirmDocumentVersionTool(learned.collector))
 
+    if settings.papers.enabled:
+        _register_paper_tools(tool_engine, settings, identity)
+
     agent_loop = AgentLoop(
         client=client,
         model=model,
@@ -249,6 +258,42 @@ def create_runtime(
             user_id=identity.user_id,
         ),
     )
+
+
+def _register_paper_tools(
+    tool_engine: ToolEngine,
+    settings: Settings,
+    identity: Identity,
+) -> None:
+    """按配置注册论文检索与阅读，共用题录源和用户级缓存。
+
+    Args:
+        tool_engine: 当前 Runtime 的工具引擎。
+        settings: 显式论文网络配置和数据根目录。
+        identity: 缓存所属的租户与用户。
+
+    Returns:
+        None。
+
+    Raises:
+        ValueError: 配置了密钥变量名，但环境中没有对应值。
+    """
+    papers = settings.papers
+    api_key: str | None = None
+    if papers.api_key_env is not None:
+        environment = {
+            **dotenv_values(resolve_project_path("env/.env")),
+            **os.environ,
+        }
+        api_key = environment.get(papers.api_key_env)
+        if not isinstance(api_key, str) or not api_key.strip():
+            raise ValueError(f"论文 API 密钥变量未设置: {papers.api_key_env}")
+        api_key = api_key.strip()
+    http = PaperHttp(papers)
+    source = OpenAlexSource(http, papers, api_key)
+    reader = PaperReader(source, http, papers, paper_directory(settings, identity))
+    tool_engine.register(SearchPapersTool(source, papers))
+    tool_engine.register(ReadPaperTool(reader, papers))
 
 
 def create_session_manager(
